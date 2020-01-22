@@ -17,6 +17,21 @@ def detection_distance(*detections, norm=None):
     return euclidean_distance(detections[0].x_hive, detections[0].y_hive, detections[1].x_hive, detections[1].y_hive) \
             / norm
 
+def detection_forward_motion(*detections, norm=None):
+    if norm is None:
+        norm = detection_temporal_distance(*detections)
+        assert norm > 0
+    motion_direction = np.array([detections[1].x_hive - detections[0].x_hive,
+                                 detections[1].y_hive - detections[0].y_hive]) / norm
+    a0 = np.array([np.sin(detections[0].orientation_hive), np.cos(detections[0].orientation_hive)])
+    a1 = np.array([np.sin(detections[1].orientation_hive), np.cos(detections[1].orientation_hive)])
+    
+    d0, d1 = np.dot(a0, motion_direction), np.dot(a1, motion_direction)
+    if np.isnan(d0) and np.isnan(d1):
+        return 0.0
+    lowest_d = np.nanmin((d0, d1))
+    return lowest_d
+
 def detection_angular_distance(*detections, norm=None):
     if norm is None:
         norm = detection_temporal_distance(*detections)
@@ -27,7 +42,7 @@ def detection_angular_distance(*detections, norm=None):
 
 def bitwise_distance(bits0, bits1, fun):
     if bits0 is None and bits1 is None:
-        return 0.0
+        return -1.0
     elif bits0 is None or bits1 is None:
         return 1.0
     return fun(np.abs(np.array(bits0) - np.array(bits1)))
@@ -38,11 +53,50 @@ def bitwise_manhattan_distance(bits0, bits1):
 def detection_id_distance(*detections):
     bits0, bits1 = detections[0].bit_probabilities, detections[1].bit_probabilities
     return bitwise_manhattan_distance(bits0, bits1)
-    
+
+def detection_type_to_index(t):
+    if t == types.DetectionType.TaggedBee:
+        return 0
+    if t == types.DetectionType.UntaggedBee:
+        return 1
+    if t == types.DetectionType.BeeOnGlass:
+        return 2
+    if t == types.DetectionType.BeeInCell:
+        return 3
+    assert False
+
+def detection_type_changes_mask(*detections):
+    values = [0, 0, 0, 0, 0, 0, 0, 0]
+    values[detection_type_to_index(detections[0].detection_type)] = 1
+    values[4 + detection_type_to_index(detections[1].detection_type)] = 1
+    return tuple(values)
+
+def get_detection_confidence(detection):
+    if detection.bit_probabilities is None:
+        return -1.0
+    return 2.0 * np.mean(np.abs(detection.bit_probabilities - 0.5))
+
+def detection_confidences(*detections):
+    return (get_detection_confidence(detections[0]),
+            get_detection_confidence(detections[1]))
+
+def detection_localizer_saliencies(*detections):
+    return (detections[0].localizer_saliency,
+            detections[1].localizer_saliency)
+
+def detection_localizer_saliencies_difference(*detections):
+    return 2.0 - abs(detections[0].localizer_saliency - detections[1].localizer_saliency)
+
 def get_detection_features(*detections):
     return (detection_distance(*detections),
             detection_angular_distance(*detections),
-            detection_id_distance(*detections))
+            detection_id_distance(*detections),
+            detection_localizer_saliencies_difference(*detections),
+            detection_forward_motion(*detections),
+            ) + \
+                detection_confidences(*detections) + \
+                detection_localizer_saliencies(*detections) + \
+                detection_type_changes_mask(*detections)
 
 def detection_id_match(*detections):
     bits0, bits1 = detections[0].bit_probabilities, detections[1].bit_probabilities
