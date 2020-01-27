@@ -13,7 +13,7 @@ from .. import types
 from .. import features
 
 
-def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_trees, timestamp_to_index):
+def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_tree, timestamp_to_index):
         
     def cut_track(track, cut_timestamp, take_left_part=True):
         if not (type(track) is types.Track):
@@ -31,7 +31,7 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
                                        frame_ids=track.frame_ids[ts_index:])
         return new_track
     
-    candidate_kd_tree, all_candidate_tracks = candidate_tracks_trees
+    candidate_kd_tree, all_candidate_tracks = candidate_tracks_tree
     
     track_results = []
     for track in current_tracks:
@@ -158,7 +158,7 @@ def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0,
                                         all_current_tracks, candidate_tracks_tree, timestamp_to_index)
                     future_results.append(f)
                 else:
-                    yield dict(timestamp=timestamp, all_current_tracks=all_current_tracks,
+                    yield dict(timestamp=timestamp, current_tracks=all_current_tracks,
                                 candidate_tracks_tree=candidate_tracks_tree, timestamp_to_index=timestamp_to_index)
 
             n_frames_processed += 1
