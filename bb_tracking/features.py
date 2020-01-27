@@ -28,7 +28,7 @@ def detection_forward_motion(*detections, norm=None):
     
     d0, d1 = np.dot(a0, motion_direction), np.dot(a1, motion_direction)
     if np.isnan(d0) and np.isnan(d1):
-        return 0.0
+        return np.nan
     lowest_d = np.nanmin((d0, d1))
     return lowest_d
 
@@ -42,9 +42,9 @@ def detection_angular_distance(*detections, norm=None):
 
 def bitwise_distance(bits0, bits1, fun):
     if bits0 is None and bits1 is None:
-        return -1.0
+        return np.nan
     elif bits0 is None or bits1 is None:
-        return 1.0
+        return np.nan
     return fun(np.abs(np.array(bits0) - np.array(bits1)))
 
 def bitwise_manhattan_distance(bits0, bits1):
@@ -73,7 +73,7 @@ def detection_type_changes_mask(*detections):
 
 def get_detection_confidence(detection):
     if detection.bit_probabilities is None:
-        return -1.0
+        return np.nan
     return 2.0 * np.mean(np.abs(detection.bit_probabilities - 0.5))
 
 def detection_confidences(*detections):
