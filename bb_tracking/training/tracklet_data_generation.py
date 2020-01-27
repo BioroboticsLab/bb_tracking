@@ -78,7 +78,8 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
             
     return track_results
 
-def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0, progress_bar=tqdm.auto.tqdm, just_yield_job_arguments=False, limit_n_frames=None):
+def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0,
+    progress_bar=tqdm.auto.tqdm, just_yield_job_arguments=False, skip_n_frames=0, limit_n_frames=None):
     
     all_timestamps = list(sorted(set(itertools.chain(*[t.timestamps for t in gt_tracks]))))
     timestamp_to_index = {t: i for i, t in enumerate(all_timestamps)}
@@ -128,14 +129,13 @@ def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0, progress_bar=tq
         timestamp_to_detection_trees_map[timestamp] = \
                         (kd_tree, tracks)
     
+    n_frames_processed = 0
     max_workers = 8 if not just_yield_job_arguments else 1
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_results = []
         for timestamp_index, timestamp in enumerate(progress_bar(all_timestamps, desc="Submitting jobs...")):
-            if timestamp_index == 0:
+            if timestamp_index <= skip_n_frames: # Always skip frame 0.
                 continue
-            if limit_n_frames is not None and timestamp_index > limit_n_frames:
-                break
                 
             all_current_tracks = get_all_tracks_for_timestamp(timestamp, track_id_to_track_map,
                                                               timestamp_to_track_id_map)
@@ -161,6 +161,9 @@ def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0, progress_bar=tq
                     yield dict(timestamp=timestamp, all_current_tracks=all_current_tracks,
                                 candidate_tracks_tree=candidate_tracks_tree, timestamp_to_index=timestamp_to_index)
 
+            n_frames_processed += 1
+            if limit_n_frames is not None and n_frames_processed >= limit_n_frames:
+                return
         if just_yield_job_arguments:
             return
 
