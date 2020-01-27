@@ -88,7 +88,7 @@ def get_tracks_metadata(tracks):
     return {cam_id: list(sorted(v)) for (cam_id, v) in timestamp_data.items()}
 
 
-def merge_tracks(sets):
+def merge_tracks(sets, verbose=True):
     metadatas = [get_tracks_metadata(s) for s in sets]
     assert len(metadatas[0]) == 1 # one cam per set.
     metadatas = [m[list(m.keys())[0]] for m in metadatas]
@@ -136,13 +136,14 @@ def merge_tracks(sets):
             matching_track_id = merge_track_map[frame_index][detection_key].id
             
             if track.id in merged_track_ids:
-                if not (merged_track_ids[track.id] == matching_track_id):
+                if verbose and not (merged_track_ids[track.id] == matching_track_id):
                     print(matching_track_id, merged_track_ids[track.id])
                 assert (merged_track_ids[track.id] == matching_track_id)
             
             merged_track_ids[track.id] = matching_track_id
-       
-    print("Matched {} tracks".format(len(merged_track_ids)))
+    
+    if verbose:
+        print("Matched {} tracks".format(len(merged_track_ids)))
     
     all_tracks = []
     already_included_ids = set()
@@ -151,7 +152,8 @@ def merge_tracks(sets):
         bee_id = tracks[0].bee_id
         if bee_id != tracks[1].bee_id:
             bee_id = [b for b in (tracks[0].bee_id, tracks[1].bee_id) if b is not None][0]
-            print("Disagreeing bee IDs {} vs. {} - choosing {}.".format(tracks[0].bee_id, tracks[1].bee_id, bee_id))
+            if verbose:
+                print("Disagreeing bee IDs {} vs. {} - choosing {}.".format(tracks[0].bee_id, tracks[1].bee_id, bee_id))
         common_frames = [tracks[1].timestamps.index(t) if t in tracks[1].timestamps else None
                          for t in tracks[0].timestamps]
         cutoff_frame_right = min(c for c in common_frames if c is not None)
@@ -178,11 +180,11 @@ def merge_tracks(sets):
     all_tracks = list(sorted(all_tracks, key=lambda t: t.timestamps[0]))
     return all_tracks
 
-def load_and_merge_ground_truth_tracks(ground_truth_paths, ground_truth_repos_path):
+def load_and_merge_ground_truth_tracks(ground_truth_paths, ground_truth_repos_path, verbose=True):
     track_sets = [load_ground_truth_tracks(path, ground_truth_repos_path)
                   for path in ground_truth_paths]
     while len(track_sets) > 1:
-        new_set = merge_tracks(track_sets[:2])
+        new_set = merge_tracks(track_sets[:2], verbose=verbose)
         del track_sets[:1]
         track_sets[0] = new_set
     return track_sets[0]
