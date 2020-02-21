@@ -1,30 +1,43 @@
 import datetime
+import math
 import numpy as np
 import numba
 from . import types
+import scipy.spatial.distance
 
-def detection_temporal_distance(*detections):
-    return (detections[1].timestamp - detections[0].timestamp).total_seconds()
+def detection_temporal_distance(detection0, detection1):
+    return detection1.timestamp_posix - detection0.timestamp_posix
 
 @numba.njit
 def euclidean_distance(x0, y0, x1, y1):
     return np.sqrt((x1 - x0) ** 2.0 + (y1 - y0) ** 2.0)
 
-def detection_distance(*detections, norm=None):
-    if norm is None:
-        norm = detection_temporal_distance(*detections)
-        assert norm > 0
-    return euclidean_distance(detections[0].x_hive, detections[0].y_hive, detections[1].x_hive, detections[1].y_hive) \
+def detection_distance(detection0, detection1, norm=np.nan):
+    if np.isnan(norm):
+        norm = detection_temporal_distance(detection0, detection1)
+    return euclidean_distance(detection0.x_hive, detection0.y_hive, detection1.x_hive, detection1.y_hive) \
             / norm
 
-def detection_forward_motion(*detections, norm=None):
-    if norm is None:
-        norm = detection_temporal_distance(*detections)
-        assert norm > 0
-    motion_direction = np.array([detections[1].x_hive - detections[0].x_hive,
-                                 detections[1].y_hive - detections[0].y_hive]) / norm
-    a0 = np.array([np.sin(detections[0].orientation_hive), np.cos(detections[0].orientation_hive)])
-    a1 = np.array([np.sin(detections[1].orientation_hive), np.cos(detections[1].orientation_hive)])
+def detection_raw_distance_vectorized(detections_left, detections_right, norm=None):
+    coordinates_left = np.nan * np.zeros(shape=(len(detections_left), 3))
+    for idx, detection in enumerate(detections_left):
+        coordinates_left[idx] = detection.x_hive, detection.y_hive, detection.timestamp.timestamp()
+
+    coordinates_right = np.nan * np.zeros(shape=(len(detections_right), 3))
+    for idx, detection in enumerate(detections_right):
+        coordinates_right[idx] = detection.x_hive, detection.y_hive, detection.timestamp.timestamp()
+    
+    distances = scipy.spatial.distance.cdist(coordinates_left[:, :2], coordinates_right[:, :2])
+    temporal_distances = -1.0 * scipy.spatial.distance.cdist(coordinates_left[:, 2:3], coordinates_right[:, 2:3], metric=np.subtract)
+
+    return distances, temporal_distances
+
+@numba.njit
+def calculate_forward_motion(x0, y0, a0, x1, y1, a1, norm):
+    motion_direction = np.array([x1 - x0,
+                                 y1 - y0]) / norm
+    a0 = np.array([np.sin(a0), np.cos(a0)])
+    a1 = np.array([np.sin(a1), np.cos(a1)])
     
     d0, d1 = np.dot(a0, motion_direction), np.dot(a1, motion_direction)
     if np.isnan(d0) and np.isnan(d1):
@@ -32,13 +45,25 @@ def detection_forward_motion(*detections, norm=None):
     lowest_d = np.nanmin((d0, d1))
     return lowest_d
 
+def detection_forward_motion(*detections, norm=None):
+    if norm is None:
+        norm = detection_temporal_distance(*detections)
+    return calculate_forward_motion(detections[0].x_hive, detections[0].y_hive, detections[0].orientation_hive,
+                                    detections[1].x_hive, detections[1].y_hive, detections[1].orientation_hive,
+                                    norm)
+
+@numba.njit
+def angular_distance(a0, a1, norm):
+    diff = abs((a0 - a1) % (2.0 * math.pi))
+    if diff >= math.pi:
+        diff -= 2.0 * math.pi
+    return abs(diff) / norm
+
 def detection_angular_distance(*detections, norm=None):
     if norm is None:
         norm = detection_temporal_distance(*detections)
-        assert norm > 0
     a0, a1 = detections[0].orientation_hive, detections[1].orientation_hive
-    return np.arctan2(np.sin(a1-a0), np.cos(a1-a0)) \
-            / norm
+    return angular_distance(a0, a1, norm)
 
 def bitwise_distance(bits0, bits1, fun):
     if bits0 is None and bits1 is None:
@@ -88,7 +113,7 @@ def detection_localizer_saliencies_difference(*detections):
     return 2.0 - abs(detections[0].localizer_saliency - detections[1].localizer_saliency)
 
 def get_detection_features(*detections):
-    return (detection_distance(*detections),
+    return (detection_distance(detections[0], detections[1]),
             detection_angular_distance(*detections),
             detection_id_distance(*detections),
             detection_localizer_saliencies_difference(*detections),
@@ -120,15 +145,21 @@ def detection_id_match_cost(*detections):
 def get_detection_features_id_only(*detections):
     return (detection_id_match(*detections),)
 
+def track_mean_id(tracklet):
+    if "track_mean_id" in tracklet.cache_:
+        return tracklet.cache_["track_mean_id"]
+
+    tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
+    if tracklet_bits.shape[0] == 0:
+        mean_id = None
+    else:
+        mean_id = np.mean(tracklet_bits, axis=0)
+
+    tracklet.cache_["track_mean_id"] = mean_id
+    return mean_id
+
 def track_id_distance(*tracklets):
-    bits = []
-    for tracklet in tracklets:
-        tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
-        if tracklet_bits.shape[0] == 0:
-            bits.append(None)
-        else:
-            bits.append(np.mean(tracklet_bits, axis=0))
-    return bitwise_manhattan_distance(*bits)
+    return bitwise_manhattan_distance(track_mean_id(tracklets[0]), track_mean_id(tracklets[1]))
 
 def track_distance(*tracklets):
     return detection_distance(tracklets[0].detections[-1], tracklets[1].detections[0])
@@ -141,21 +172,29 @@ def short_angle_dist(a0,a1):
     da = (a1 - a0) % max
     return 2*da % max - da
 
+@numba.njit
+def extrapolate_position_and_angles(x0, y0, a0, x1, y1, a1, factor):
+    x = x1 + (x1 - x0) * factor
+    y = y1 + (y1 - y0) * factor
+    a = a1 + short_angle_dist(a0, a1) * factor
+    return x, y, a
+
+
 def extrapolate_detections(seconds, *detections):
     if len(detections) == 1:
         return detections[0]
 
     seconds_distance = detection_temporal_distance(*detections)
-    timestamp = detections[0].timestamp + datetime.timedelta(seconds=seconds)
     extrapolation_factor = seconds / seconds_distance
-    x = detections[1].x_hive + (detections[1].x_hive - detections[0].x_hive) * extrapolation_factor
-    y = detections[1].y_hive + (detections[1].y_hive - detections[0].y_hive) * extrapolation_factor
-    orientation = detections[1].orientation_hive + short_angle_dist(detections[0].orientation_hive, detections[1].orientation_hive) * extrapolation_factor
+
+    x, y, orientation = extrapolate_position_and_angles(detections[0].x_hive, detections[0].y_hive, detections[0].orientation_hive,
+                                             detections[1].x_hive, detections[1].y_hive, detections[1].orientation_hive,
+                                             extrapolation_factor)
 
     return types.Detection(None, None, None,
             x, y, orientation,
-            timestamp, 0,
-            detections[0].detection_type, None, None, None)
+            None, detections[1].timestamp_posix + seconds, 0,
+            detections[1].detection_type, None, None, None)
 
 def track_forward_distance(*tracklets):
     seconds_distance = detection_temporal_distance(tracklets[0].detections[-1], tracklets[1].detections[0])
@@ -169,11 +208,17 @@ def track_angular_distance(*tracklets):
     return detection_angular_distance(tracklets[0].detections[-1], tracklets[1].detections[0])
 
 def track_decoder_confidence(tracklet):
+    if "track_decoder_confidence" in tracklet.cache_:
+        return tracklet.cache_["track_decoder_confidence"]
+
     bits = [d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee]
-    if len(bits) == 0:
-        return 0.0
-    bits = np.median(np.array(bits), axis=0)
-    return np.min(np.abs(bits - 0.5))
+    if len(bits) != 0:
+        bits = np.median(np.array(bits), axis=0)
+        confidence = np.min(np.abs(bits - 0.5))
+    else:
+        confidence = 0.0
+    tracklet.cache_["track_decoder_confidence"] = confidence
+    return confidence
 
 def track_difference_of_confidence(*tracklets):
     return abs(track_decoder_confidence(tracklets[0]) - track_decoder_confidence(tracklets[1]))

@@ -28,7 +28,7 @@ def make_detection(bee, H=None, frame_id=None, timestamp=None, orientation=np.na
 
     return types.Detection(x, y, orientation,
                            x_hive, y_hive, orientation_hive,
-                           timestamp, frame_id,
+                           timestamp, timestamp.timestamp(), frame_id,
                            detection_type, bee.idx, localizerSaliency,
                            bit_probabilities)
 

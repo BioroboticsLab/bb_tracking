@@ -1,23 +1,30 @@
 import numba
+import numba.typed
 import numpy as np
-import scipy.optimize
+import hungarian
 
 from . import types
 
-def get_detection_features(detection0_index, detection1_index, 
-                           detection0, detection1, seconds_passed, detection_cost_fn):
-    
-    return detection0_index, detection1_index, detection_cost_fn(detection0, detection1, seconds_passed)
-
-def match_detection_lists(open_detections,
+def calculate_detection_pair_features(open_detections,
                           frame_detections, frame_kdtree,
-                          max_distance, **kwargs):
+                          max_distance, detection_feature_fn, detection_cost_fn, n_features):
+    tracklet_indices = []
+    detection_indices = []
+
     for i, detection in enumerate(open_detections):
         x, y = detection.x_hive, detection.y_hive
         neighbors = frame_kdtree.query_ball_point((x, y), max_distance)
 
         for j in neighbors:
-            yield get_detection_features(i, j, detection, frame_detections[j], **kwargs)
+            tracklet_indices.append(i)
+            detection_indices.append(j)
+
+    all_features = np.nan * np.zeros(shape=(len(tracklet_indices), n_features), dtype=np.float32)
+    for idx, (i, j) in enumerate(zip(tracklet_indices, detection_indices)):
+        pair_features = detection_feature_fn(open_detections[i], frame_detections[j])
+        all_features[idx] = pair_features
+
+    return tracklet_indices, detection_indices, all_features
 
 def generate_random_track_id():
     """Returns a unique ID that is 64 bits long.
@@ -33,16 +40,17 @@ def generate_random_track_id():
     hash = hash >> (hash.bit_length() - 64)
     return hash
 
-@numba.njit
-def fill_distance_matrix(candidates, matrix):
-    for i, j, distance in candidates:
-        matrix[i, j] = distance
+def fill_distance_matrix(detection0_indices, detection1_indices, distances, matrix):
+    matrix[detection0_indices, detection1_indices] = distances
 
 class TrackletGenerator():
 
-    def __init__(self, cam_id, detection_cost_fn, max_distance_per_second=10.0, max_seconds_gap=1.0, max_cost=1.0):
+    def __init__(self, cam_id, detection_feature_fn, detection_cost_fn, n_features,
+                 max_distance_per_second=10.0, max_seconds_gap=1.0, max_cost=1.0):
         self.cam_id = cam_id
 
+        self.n_features = n_features
+        self.detection_feature_fn = detection_feature_fn
         self.detection_cost_fn = detection_cost_fn
 
         self.open_tracklets = []
@@ -64,7 +72,7 @@ class TrackletGenerator():
     def push_detections_as_new_tracklets(self, detections, frame_id, frame_datetime):
         for detection in detections:
             self.open_tracklets.append(types.Track(generate_random_track_id(), self.cam_id,
-                                             [detection], [frame_datetime], [frame_id], None))
+                                             [detection], [frame_datetime], [frame_id], None, dict()))
 
     def push_frame(self, frame_id, frame_datetime, frame_detections, frame_kdtree):
 
@@ -80,7 +88,6 @@ class TrackletGenerator():
                 allowed_max_distance = self.max_distance_per_second * seconds_since_last_frame
 
         self.last_frame_datetime = frame_datetime
-
         n_open_tracklets = len(self.open_tracklets)
         n_new_detections = len(frame_detections)
 
@@ -89,15 +96,24 @@ class TrackletGenerator():
             self.push_detections_as_new_tracklets(frame_detections, frame_id, frame_datetime)
             return
 
-        cost_matrix = np.ones(shape=(n_open_tracklets, n_new_detections), dtype=np.float32) + self.max_cost + 1e10
-
-        candidates = match_detection_lists((tracklet.detections[-1] for tracklet in self.open_tracklets),
+        detection0_indices, detection1_indices, all_features = calculate_detection_pair_features(
+                                            [tracklet.detections[-1] for tracklet in self.open_tracklets],
                                             frame_detections, frame_kdtree, max_distance=allowed_max_distance,
-                                            detection_cost_fn=self.detection_cost_fn, seconds_passed=seconds_since_last_frame)
-        candidates = list(candidates)
-        if len(candidates) > 0:
-            fill_distance_matrix(candidates, cost_matrix)
-            tracklet_indices, detection_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
+                                            detection_feature_fn=self.detection_feature_fn, n_features=self.n_features,
+                                            detection_cost_fn=self.detection_cost_fn)
+        
+        if len(detection0_indices) > 0:
+            distances = self.detection_cost_fn(all_features)
+            detection0_indices = np.array(detection0_indices, dtype=np.int32)
+            detection1_indices = np.array(detection1_indices, dtype=np.int32)
+
+            
+            square_dimension = max(n_open_tracklets, n_new_detections)
+            cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
+
+            fill_distance_matrix(detection0_indices, detection1_indices, distances, cost_matrix)
+            lap_results = hungarian.lap(cost_matrix.copy())
+            tracklet_indices, detection_indices = tuple(range(cost_matrix.shape[0])), lap_results[0]
         else:
             tracklet_indices, detection_indices = tuple(), tuple()
 
@@ -112,9 +128,13 @@ class TrackletGenerator():
             tracklet.detections.append(frame_detections[detection_idx])
             tracklet.timestamps.append(frame_datetime)
             tracklet.frame_ids.append(frame_id)
+            tracklet.cache_.clear()
+
+            assert tracklet_idx not in linked_tracklet_indices
+            assert detection_idx not in linked_detection_indices
 
             linked_tracklet_indices.add(tracklet_idx)
-            linked_detection_indices.add(tracklet_idx)
+            linked_detection_indices.add(detection_idx)
 
         # Uncontinued tracklets are closed.
         self.minimum_open_tracklet_begin = None

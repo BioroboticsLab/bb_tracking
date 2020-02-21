@@ -2,6 +2,7 @@
 import numba
 import numpy as np
 import prefetch_generator
+import tqdm.auto
 
 from . import types
 from . import data_walker
@@ -11,11 +12,12 @@ from . import tracklet_generator
 from . import track_generator
 
 class CamDataGeneratorTracker():
-    def __init__(self, generator, cam_ids, tracklet_kwargs=dict(), track_kwargs=dict()):
+    def __init__(self, generator, cam_ids, tracklet_kwargs=dict(), track_kwargs=dict(), progress_bar=tqdm.auto.tqdm):
         self.cam_ids = cam_ids
         self.generator = generator
         self.tracklet_kwargs = tracklet_kwargs
         self.track_kwargs = track_kwargs
+        self.progress_bar = progress_bar
     
     def __iter__(self):
         trackers = {cam_id: track_generator.TrackGenerator(
@@ -25,7 +27,7 @@ class CamDataGeneratorTracker():
 
         untracked_cam_ids = set()
         for (cam_id, frame_id, frame_datetime, frame_detections, frame_kdtree) in \
-                prefetch_generator.BackgroundGenerator(self.generator(), max_prefetch=5):
+                self.progress_bar(prefetch_generator.BackgroundGenerator(self.generator(), max_prefetch=5)):
                 if cam_id not in trackers:
                     untracked_cam_ids.add(cam_id)
                     continue

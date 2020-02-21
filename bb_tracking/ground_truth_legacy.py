@@ -16,9 +16,10 @@ def convert_detection(old_detection : bb_tracking.data.datastructures.Detection,
     x, y, orientation = old_detection.x, old_detection.y, old_detection.orientation
     x_hive, y_hive, orientation_hive = get_hive_coordinates(x, y, orientation, H)
     frame_id = int(old_detection.id[1:].split("d")[0])
+    timestamp = pytz.UTC.localize(datetime.datetime.utcfromtimestamp(old_detection.timestamp))
     return types.Detection(x, y, orientation,
                            x_hive, y_hive, orientation_hive,
-                           pytz.UTC.localize(datetime.datetime.utcfromtimestamp(old_detection.timestamp)),
+                           timestamp, timestamp.timestamp(),
                            frame_id,
                            types.DetectionType.TaggedBee, 0, old_detection.meta["localizerSaliency"],
                            old_detection.beeId)
@@ -31,7 +32,7 @@ def convert_track(old_track : bb_tracking.data.datastructures.Track, H):
     frame_ids = [generate_random_track_id() for _ in range(len(datetimes))]
     detections = [convert_detection(d, H=H) for d in old_track.meta["detections"]]
 
-    return types.Track(generate_random_track_id(), cam_id, detections, datetimes, frame_ids, None)
+    return types.Track(generate_random_track_id(), cam_id, detections, datetimes, frame_ids, None, dict())
 
 def load_ground_truth_tracks(path="/mnt/storage/beesbook/learning_data/learning_fragments_framediff17_dataset20150918_Truth.p",
                                 N=None,

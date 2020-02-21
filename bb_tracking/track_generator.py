@@ -1,23 +1,31 @@
 import numpy as np
-import scipy.optimize
+import hungarian
 from . import tracklet_generator
 from . import types
+from . import features
 import bb_utils.ids
 
-def match_track_lists(open_tracks, new_tracklets, tracklet_cost_fn, max_seconds_gap, **kwargs):
-    for i, open_track in enumerate(open_tracks):
-        for j, tracklet in enumerate(new_tracklets):
-            gap_duration_seconds = (tracklet.timestamps[0] - open_track.timestamps[-1]).total_seconds()
+def calculate_track_pair_features(open_tracks, new_tracklets, tracklet_feature_fn,
+                                    max_distance_per_second, max_seconds_gap, n_features):
+    detections_left = [t.detections[-1] for t in open_tracks]
+    detections_right = [t.detections[0] for t in new_tracklets]
 
-            if gap_duration_seconds <= 0.0 or gap_duration_seconds > max_seconds_gap:
-                continue
-            if not (open_track.detections[-1].timestamp < tracklet.detections[0].timestamp):
-                print (gap_duration_seconds)
-                print(open_track)
-                print(tracklet)
-            assert open_track.detections[-1].timestamp < tracklet.detections[0].timestamp
+    euclidean_distances, temporal_distances = features.detection_raw_distance_vectorized(detections_left, detections_right)
+ 
+    valid_indices = (temporal_distances > 0) & (temporal_distances < max_seconds_gap)
+    if max_distance_per_second is not None:
+        euclidean_distances[valid_indices] /= temporal_distances[valid_indices]
+        valid_indices = valid_indices & (euclidean_distances <= max_distance_per_second)
 
-            yield i, j, tracklet_cost_fn(open_track, tracklet)
+    tracklets0_indices, tracklets1_indices = np.where(valid_indices)
+    all_features = np.nan * np.zeros(shape=(len(tracklets0_indices), n_features), dtype=np.float32)
+
+    for i, (t0, t1) in enumerate(zip(tracklets0_indices, tracklets1_indices)):
+        open_track, tracklet = open_tracks[t0], new_tracklets[t1]
+        tracklet_pair_features = tracklet_feature_fn(open_track, tracklet)
+        all_features[i] = tracklet_pair_features
+
+    return tracklets0_indices, tracklets1_indices, all_features
 
 def assign_tracked_bee_id(track):
     bits = []
@@ -32,11 +40,16 @@ def assign_tracked_bee_id(track):
     return bee_id
 
 class TrackGenerator():
-    def __init__(self, tracklet_generator, tracklet_cost_fn, max_cost=1.0, max_seconds_gap=5.0):
+    def __init__(self, tracklet_generator, n_features, tracklet_feature_fn, tracklet_cost_fn,
+                    max_distance_per_second=None, max_cost=1.0, max_seconds_gap=5.0):
         self.tracklet_generator = tracklet_generator
+        self.n_features = n_features
+        self.tracklet_feature_fn = tracklet_feature_fn
         self.tracklet_cost_fn = tracklet_cost_fn
-
+        self.closed_tracklet_queue = [] # New tracklets are first collected and then processed in bulk.
+        self.closed_tracklet_queue_first_end_timestamp = None
         self.max_cost = max_cost
+        self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
 
         self.open_tracks = []
@@ -47,35 +60,75 @@ class TrackGenerator():
         return track
 
     def finalize_all(self):
+        yield from self.process_closed_tracklet_queue()
         closed_tracklets = self.tracklet_generator.finalize_all()
         yield from self.push_tracklets(closed_tracklets)
         yield from (self.finalize_track(t) for t in self.open_tracks)
         self.open_tracks = []
 
+    def process_closed_tracklet_queue(self):
+        queue = self.closed_tracklet_queue
+        self.closed_tracklet_queue = []
+        self.closed_tracklet_queue_first_end_timestamp = None
+        yield from self.push_tracklets(queue)
+
     def push_frame(self, *args):
         closed_tracklets = self.tracklet_generator.push_frame(*args)
-        yield from self.push_tracklets(closed_tracklets)
+        closed_tracklets = list(closed_tracklets)
+
+        if len(closed_tracklets) == 0:
+            return
+
+        first_end_timestamp = min(t.timestamps[-1] for t in closed_tracklets)
+        first_begin_timestamp = min(t.timestamps[0] for t in closed_tracklets)
+        
+        if self.closed_tracklet_queue_first_end_timestamp is not None:
+            queue_contains_possible_precursor_tracks = self.closed_tracklet_queue_first_end_timestamp < first_begin_timestamp
+        else:
+            queue_contains_possible_precursor_tracks = False
+            
+        if len(self.closed_tracklet_queue) > 100 or queue_contains_possible_precursor_tracks:
+            yield from self.process_closed_tracklet_queue()
+        
+        if self.closed_tracklet_queue_first_end_timestamp is None:
+            self.closed_tracklet_queue_first_end_timestamp = first_end_timestamp
+        else:
+            self.closed_tracklet_queue_first_end_timestamp = min(self.closed_tracklet_queue_first_end_timestamp, first_end_timestamp)
+        
+        self.closed_tracklet_queue += closed_tracklets
 
     def push_tracklets(self, tracklets):
         
-        tracklets = list(tracklets)
+        assert len(self.closed_tracklet_queue) == 0
 
+        tracklets = list(tracklets)
+        if len(tracklets) == 0:
+            return
         if len(self.open_tracks) == 0:
             self.open_tracks = tracklets
             return
         
         n_open_tracks = len(self.open_tracks)
         n_new_tracklets = len(tracklets)
-        cost_matrix = np.ones(shape=(n_open_tracks, n_new_tracklets), dtype=np.float32) + self.max_cost + 1e10
 
-        candidates = match_track_lists(self.open_tracks, tracklets, self.tracklet_cost_fn, self.max_seconds_gap)
-        candidates = list(candidates)
+        tracklet0_indices, tracklet1_indices, all_features = calculate_track_pair_features(
+            self.open_tracks, tracklets, self.tracklet_feature_fn, self.max_distance_per_second, self.max_seconds_gap, self.n_features)
+        
+        square_dimension = max(n_open_tracks, n_new_tracklets)
+        cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
 
-        if len(candidates) > 0:
-            tracklet_generator.fill_distance_matrix(candidates, cost_matrix)
-            track_indices, tracklet_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
+        if len(tracklet0_indices) > 0:
+            all_distances = self.tracklet_cost_fn(all_features[:len(tracklet0_indices), :])
+            tracklet0_indices = np.array(tracklet0_indices, dtype=np.int32)
+            tracklet1_indices = np.array(tracklet1_indices, dtype=np.int32)
+
+            tracklet_generator.fill_distance_matrix(tracklet0_indices, tracklet1_indices, all_distances, cost_matrix)
+            lap_results = hungarian.lap(cost_matrix.copy())
+            track_indices, tracklet_indices = tuple(range(cost_matrix.shape[0])), lap_results[0]
         else:
             track_indices, tracklet_indices = tuple(), tuple()
+
+        _all_costs = []
 
         linked_track_indices = set()
         linked_tracklet_indices = set()
@@ -83,14 +136,20 @@ class TrackGenerator():
             cost = cost_matrix[track_idx, tracklet_idx]
             if cost > self.max_cost:
                 continue
+            _all_costs.append(cost)
+
             track = self.open_tracks[track_idx]
             track.detections.extend(tracklets[tracklet_idx].detections)
             track.timestamps.extend(tracklets[tracklet_idx].timestamps)
             track.frame_ids.extend(tracklets[tracklet_idx].frame_ids)
+            track.cache_.clear()
+
+            assert track_idx not in linked_track_indices
+            assert tracklet_idx not in linked_tracklet_indices
 
             linked_track_indices.add(track_idx)
             linked_tracklet_indices.add(tracklet_idx)
-        
+
         # Possibly close tracks that have been open for too long.
         minimum_open_tracklet_datetime = self.tracklet_generator.get_minimum_open_tracklet_begin()
         if minimum_open_tracklet_datetime is not None:

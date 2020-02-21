@@ -13,7 +13,8 @@ from .. import types
 from .. import features
 
 
-def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_tree, timestamp_to_index):
+def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_tree, timestamp_to_index,
+                                    max_speed_per_second=400):
         
     def cut_track(track, cut_timestamp, take_left_part=True):
         if not (type(track) is types.Track):
@@ -66,6 +67,12 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
             
             left_detection = left_track.detections[-1]
             right_detection = right_track.detections[0]
+
+            if max_speed_per_second is not None:
+                necessary_distance_per_second = features.detection_distance(left_detection, right_detection)
+                if necessary_distance_per_second > max_speed_per_second:
+                    continue
+
             assert right_detection.timestamp >= timestamp
             assert left_detection.timestamp < timestamp
             assert left_detection.timestamp != right_detection.timestamp
