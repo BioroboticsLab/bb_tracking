@@ -42,7 +42,7 @@ def assign_tracked_bee_id(track):
 
 class TrackGenerator():
     def __init__(self, tracklet_generator, n_features, tracklet_feature_fn, tracklet_cost_fn,
-                    max_distance_per_second=None, max_cost=1.0, max_seconds_gap=5.0):
+                    max_distance_per_second=None, max_cost=1.0, max_seconds_gap=5.0, verbose=False):
         self.tracklet_generator = tracklet_generator
         self.n_features = n_features
         self.tracklet_feature_fn = tracklet_feature_fn
@@ -52,6 +52,7 @@ class TrackGenerator():
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
+        self.verbose = verbose
 
         self.open_tracks = []
 
@@ -83,6 +84,8 @@ class TrackGenerator():
         closed_tracklets = list(closed_tracklets)
 
         if len(closed_tracklets) == 0:
+            if self.verbose:
+                print("Next frame. No new tracklets.")
             return
 
         first_end_timestamp = min(t.timestamps[-1] for t in closed_tracklets)
@@ -92,8 +95,13 @@ class TrackGenerator():
             queue_contains_possible_precursor_tracks = self.closed_tracklet_queue_first_end_timestamp < first_begin_timestamp
         else:
             queue_contains_possible_precursor_tracks = False
-            
-        if len(self.closed_tracklet_queue) > 100 or queue_contains_possible_precursor_tracks:
+        
+        if self.verbose:
+            print("Next frame. {} new tracklets. (Current processing queue: {}, open tracks: {})"
+                  "\n\tmin queue end timestamp:\t{}\n\tmin new tracklets timestamp:\t{}".format(
+                len(closed_tracklets), len(self.closed_tracklet_queue), len(self.open_tracks), self.closed_tracklet_queue_first_end_timestamp, first_begin_timestamp))
+
+        if len(self.closed_tracklet_queue) > 500 or queue_contains_possible_precursor_tracks:
             yield from self.process_closed_tracklet_queue()
         
         if self.closed_tracklet_queue_first_end_timestamp is None:
@@ -155,6 +163,9 @@ class TrackGenerator():
 
             linked_track_indices.add(track_idx)
             linked_tracklet_indices.add(tracklet_idx)
+
+        if self.verbose:
+            print("\tLinked {}/{} pushed tracklets.".format(len(linked_track_indices), len(tracklets)))
 
         # Possibly close tracks that have been open for too long.
         minimum_open_tracklet_datetime = self.tracklet_generator.get_minimum_open_tracklet_begin()
