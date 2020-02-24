@@ -1,3 +1,4 @@
+import datetime, pytz
 import numpy as np
 import hungarian
 from . import tracklet_generator
@@ -57,6 +58,11 @@ class TrackGenerator():
     def finalize_track(self, track):
         tracked_bee_id = assign_tracked_bee_id(track)
         track = track._replace(bee_id = tracked_bee_id)
+
+        for idx, detection in enumerate(track.detections):
+            if detection.timestamp is None:
+                track.detections[idx] = detection._replace(timestamp=datetime.datetime.fromtimestamp(detection.timestamp_posix, tz=pytz.UTC))
+
         return track
 
     def finalize_all(self):

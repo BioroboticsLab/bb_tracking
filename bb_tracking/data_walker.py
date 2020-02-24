@@ -21,21 +21,25 @@ def get_hive_coordinates(x, y, orientation, H):
     return xy_mm[0, 0], xy_mm[0, 1], orientation_hive
     
 def make_detection(bee, H=None, frame_id=None, timestamp=None, orientation=np.nan, detection_type=types.DetectionType.Invalid,
-                   bit_probabilities=None, is_truth=False):
+                   bit_probabilities=None, is_truth=False, no_datetime_timestamps=False):
     x, y = bee.xpos, bee.ypos
     x_hive, y_hive, orientation_hive = get_hive_coordinates(x, y, orientation, H)
     localizerSaliency = np.nan if is_truth else bee.localizerSaliency
 
-    return types.Detection(x, y, orientation,
+    posix_timestamp = timestamp.timestamp()
+    if no_datetime_timestamps:
+        timestamp = None
+
+    return types.Detection(x, y, orientation, 
                            x_hive, y_hive, orientation_hive,
-                           timestamp, timestamp.timestamp(), frame_id,
+                           timestamp, posix_timestamp, frame_id,
                            detection_type, bee.idx, localizerSaliency,
                            bit_probabilities)
 
 
 def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_fn=None,
                                  is_truth_repos=False, only_tagged_bees=False, cam_id=None,
-                                 is_2019_repos=True):
+                                 is_2019_repos=True, no_datetime_timestamps=False):
     repo = bb_binary.Repository(repository_path)
 
     for fc_path in repo.iter_fnames(begin=dt_begin, end=dt_end, cam=cam_id):
@@ -62,7 +66,8 @@ def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_f
                 for bee in bee_generator:
                     frame_detections.append(make_detection(
                         bee, frame_id=frame_id, timestamp=frame_datetime, orientation=bee.zRotation,
-                        H=H, detection_type=types.DetectionType.TaggedBee, bit_probabilities=np.array(bee.decodedId) / 255.0))
+                        H=H, detection_type=types.DetectionType.TaggedBee, bit_probabilities=np.array(bee.decodedId) / 255.0,
+                        no_datetime_timestamps=no_datetime_timestamps))
             else:
                 # GT bees.
                 bee_generator = frame.detectionsTruth if is_2019_repos else frame.detectionsUnion.detectionsTruth
@@ -73,7 +78,7 @@ def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_f
                     frame_detections.append(make_detection(
                         bee, frame_id=frame_id, timestamp=frame_datetime,
                         H=H, detection_type=types.DetectionType.TaggedBee, bit_probabilities=bit_probabilities,
-                        is_truth=True))
+                        is_truth=True, no_datetime_timestamps=no_datetime_timestamps))
 
             if not only_tagged_bees:
                 # Untagged bees.
@@ -83,7 +88,8 @@ def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_f
                                       upsideDown=types.DetectionType.BeeOnGlass)[str(bee.type)]
                     frame_detections.append(make_detection(
                         bee, frame_id=frame_id, timestamp=frame_datetime,
-                        H=H, detection_type=detection_type, bit_probabilities=None))
+                        H=H, detection_type=detection_type, bit_probabilities=None,
+                        no_datetime_timestamps=no_datetime_timestamps))
             
             xy = [(detection.x_hive, detection.y_hive) for detection in frame_detections]
             frame_kdtree = scipy.spatial.cKDTree(xy)
