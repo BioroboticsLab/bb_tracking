@@ -36,7 +36,10 @@ def assign_tracked_bee_id(track):
     if len(bits) == 0:
         return None
     bits = np.stack(bits, axis=0)
-    bee_id = np.median(bits, axis=0)
+    bit_confidences = np.abs(bits - 0.5) * 2.0
+    confidences = np.mean(np.log1p(bit_confidences), axis=1)
+    perc = np.percentile(confidences, 90)    
+    bee_id = np.median(bits[confidences >= perc, :], axis=0)
     bee_id = bb_utils.ids.BeesbookID.from_bb_binary(bee_id).as_ferwar()
     return bee_id
 
