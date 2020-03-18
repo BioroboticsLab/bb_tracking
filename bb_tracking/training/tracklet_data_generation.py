@@ -14,7 +14,7 @@ from .. import features
 
 
 def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_tree, timestamp_to_index,
-                                    max_speed_per_second=400):
+                                    max_speed_per_second=400, max_gap_length_n_frames=30):
         
     def cut_track(track, cut_timestamp, take_left_part=True):
         if not (type(track) is types.Track):
@@ -45,43 +45,62 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
         
         det = right_track.detections[0]
         det_xy = np.array([det.x_hive, det.y_hive])
-        d, idx = candidate_kd_tree.query(det_xy, 10)
-        candidate_tracks = [all_candidate_tracks[i] for i in idx]
+        # Take the closest candidates.
+        _, candidate_indices = candidate_kd_tree.query(det_xy, 10)
+        # And throw in a bunch of random ones. Unlikely candidates will be filtered out anyway.
+        candidate_indices = set(candidate_indices) | set(np.random.choice(len(all_candidate_tracks), 20))
+        candidate_tracks = [all_candidate_tracks[i] for i in candidate_indices]
+
         if track not in candidate_tracks:
             candidate_tracks.append(track)
         
         for candidate in candidate_tracks:
-            assert timestamp >= candidate.timestamps[0]
-            assert type(candidate) is types.Track
-            candidate_cut_timestamp = min(timestamp, candidate.timestamps[-1])
-            
-            left_track = cut_track(candidate, candidate_cut_timestamp, take_left_part=True)
-            if len(left_track.detections) == 0:
-                continue
-            left_track_last_timestamp_index = timestamp_to_index[left_track.timestamps[-1]]
-            gap_length_n_frames = right_track_first_timestamp_index - left_track_last_timestamp_index
-            
-            target = int(left_track.id == right_track.id)
-            
-            tracklet_pair_features = features.get_track_features(left_track, right_track)
-            
-            left_detection = left_track.detections[-1]
-            right_detection = right_track.detections[0]
+            for gap_samples in range(3):
+                assert timestamp >= candidate.timestamps[0]
+                assert type(candidate) is types.Track
+                last_candidate_cut_timestamp = min(timestamp, candidate.timestamps[-1])
+                last_candidate_cut_timestamp_index = timestamp_to_index[last_candidate_cut_timestamp]
+                candidate_cut_timestamp = last_candidate_cut_timestamp
 
-            if max_speed_per_second is not None:
-                necessary_distance_per_second = features.detection_distance(left_detection, right_detection)
-                if necessary_distance_per_second > max_speed_per_second:
+                if gap_samples > 0:
+                    earliest_allowed_cut_index = right_track_first_timestamp_index - max_gap_length_n_frames
+                    max_gap = last_candidate_cut_timestamp_index - earliest_allowed_cut_index
+                    if max_gap > 2:
+                        gap = np.random.randint(2, max_gap)
+                        candidate_cut_timestamp_index = max(1, bisect.bisect_right(candidate.timestamps, last_candidate_cut_timestamp) - gap)
+                        candidate_cut_timestamp = candidate.timestamps[candidate_cut_timestamp_index]
+
+                if candidate_cut_timestamp >= timestamp:
+                    continue
+                left_track = cut_track(candidate, candidate_cut_timestamp, take_left_part=True)
+                if len(left_track.detections) == 0:
+                    continue
+                left_track_last_timestamp_index = timestamp_to_index[left_track.timestamps[-1]]
+                gap_length_n_frames = right_track_first_timestamp_index - left_track_last_timestamp_index
+                if gap_length_n_frames > max_gap_length_n_frames:
                     continue
 
-            assert right_detection.timestamp >= timestamp
-            assert left_detection.timestamp < timestamp
-            assert left_detection.timestamp != right_detection.timestamp
-            meta = [timestamp_to_index[left_detection.timestamp], left_detection.x_pixels, left_detection.y_pixels,
-                    timestamp_to_index[right_detection.timestamp], right_detection.x_pixels, right_detection.y_pixels,
-                    left_track.bee_id, right_track.bee_id,
-                    gap_length_n_frames]
-            
-            track_results.append((tracklet_pair_features, target, meta))
+                target = int(left_track.id == right_track.id)
+                
+                tracklet_pair_features = features.get_track_features(left_track, right_track)
+                
+                left_detection = left_track.detections[-1]
+                right_detection = right_track.detections[0]
+
+                if max_speed_per_second is not None:
+                    necessary_distance_per_second = features.detection_distance(left_detection, right_detection)
+                    if necessary_distance_per_second > max_speed_per_second:
+                        continue
+
+                assert right_detection.timestamp >= timestamp
+                assert left_detection.timestamp < timestamp
+                assert left_detection.timestamp != right_detection.timestamp
+                meta = [timestamp_to_index[left_detection.timestamp], left_detection.x_pixels, left_detection.y_pixels,
+                        timestamp_to_index[right_detection.timestamp], right_detection.x_pixels, right_detection.y_pixels,
+                        left_track.bee_id, right_track.bee_id,
+                        gap_length_n_frames]
+                
+                track_results.append((tracklet_pair_features, target, meta))
             
     return track_results
 
@@ -162,11 +181,11 @@ def generate_tracklet_features(gt_tracks, verbose=True, FPS=6.0,
                 
                 if not just_yield_job_arguments:
                     f = executor.submit(generate_features_for_timestamp, timestamp,
-                                        all_current_tracks, candidate_tracks_tree, timestamp_to_index)
+                                        all_current_tracks, candidate_tracks_tree, timestamp_to_index, max_gap_length_n_frames=max_gap_length_n_frames)
                     future_results.append(f)
                 else:
                     yield dict(timestamp=timestamp, current_tracks=all_current_tracks,
-                                candidate_tracks_tree=candidate_tracks_tree, timestamp_to_index=timestamp_to_index)
+                                candidate_tracks_tree=candidate_tracks_tree, timestamp_to_index=timestamp_to_index, max_gap_length_n_frames=max_gap_length_n_frames)
 
             n_frames_processed += 1
             if limit_n_frames is not None and n_frames_processed >= limit_n_frames:
