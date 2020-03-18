@@ -3,6 +3,8 @@ import numpy as np
 import pandas
 import tqdm.auto
 
+from . import types
+
 def get_metrics_for_track(track, gt_track, track_false_positives):
     def series_for_track(t, is_false_positive):
         track_frames = []
@@ -21,6 +23,7 @@ def get_metrics_for_track(track, gt_track, track_false_positives):
     #print(df)
     stats = dict()
     stats["n_detections"] = (~pandas.isnull(df.idx_detection)).sum()
+    stats["n_detections_with_ids"] = (~pandas.isnull(df.type_detection) & (df.type_detection == types.DetectionType.TaggedBee)).sum()
     stats["gt_track_len"] = (~pandas.isnull(df.idx_gt)).sum()
     
     valid_idx = np.where(~pandas.isnull(df.idx_detection))[0]
@@ -41,7 +44,8 @@ def get_metrics_for_track(track, gt_track, track_false_positives):
     stats["deletes"] = ((pandas.isnull(df.idx_detection)) & (~pandas.isnull(df.idx_gt))).sum()
     stats["n_gaps"] = df.shape[0] - stats["n_detections"]
     stats["correct_track_id"] = int(track.bee_id == gt_track.bee_id)
-    stats["correct_detection_id"] = stats["correct_track_id"] * stats["n_detections"]
+    stats["correct_detection_id_all"] = stats["correct_track_id"] * stats["n_detections"]
+    stats["correct_detection_id"] = stats["correct_track_id"] * stats["n_detections_with_ids"]
 
     track_score = (stats["matches"], stats["n_detections"] / stats["gt_track_len"])
 
@@ -58,7 +62,7 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
     gt_detection_to_track_id = dict()
 
     track_counter = 0
-    for gt_track in progress_bar(ground_truth_track_generator, desc="Checking ground truth.."):
+    for gt_track in progress_bar(ground_truth_track_generator, desc="Loading ground truth tracks.."):
         track_counter += 1
         gt_track_id_to_track[gt_track.id] = gt_track
         for detection in gt_track.detections:
@@ -67,7 +71,7 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
             assert detection.frame_id in gt_track.frame_ids
             gt_detection_to_track_id[(detection.frame_id, detection.detection_type, detection.detection_index)] = gt_track.id
 
-    for (fid, dtype, didx), track_id in gt_detection_to_track_id.items():
+    for (fid, dtype, didx), track_id in progress_bar(gt_detection_to_track_id.items(), desc="Building detection mappings.."):
         track = gt_track_id_to_track[track_id]
         fids = [d.frame_id for d in track.detections]
         if fid not in track.frame_ids:
@@ -78,7 +82,6 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
         assert (dtype, didx) in det_keys
 
     assert len(list(gt_track_id_to_track.keys())) == track_counter
-    print("Found {} GT tracks.".format(track_counter))
 
     def get_all_gt_tracks_for_track(track):
         nonlocal gt_track_id_to_track
@@ -87,20 +90,17 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
 
         for d in track.detections:
             key = (d.frame_id, d.detection_type, d.detection_index)
-            if (key in gt_detection_to_track_id) and (key not in found_track_ids):
-                found_track_ids.add(key)
+            if (key in gt_detection_to_track_id):
                 track_id = gt_detection_to_track_id[key]
-                matching_gt_track = gt_track_id_to_track[track_id]
-                #print("key: {}\tTrack len: {}".format(key, len(track.detections)))
-                #print(track)
-                #print("GT Track:")
-                #print(matching_gt_track)
-                yield matching_gt_track
+                found_track_ids.add(track_id)
+        for track_id in found_track_ids:
+            matching_gt_track = gt_track_id_to_track[track_id]
+            yield matching_gt_track
 
     statistics = defaultdict(float)
 
     all_track_stats = []
-    for track in progress_bar(track_generator, desc="Tracking repository..."):
+    for track in progress_bar(track_generator, desc="Matching tracks..."):
         false_positives = [(d.frame_id, d.detection_type, d.detection_index) not in gt_detection_to_track_id for d in track.detections]
         max_score, track_stats = None, None
         for gt_track in get_all_gt_tracks_for_track(track):
