@@ -1,3 +1,4 @@
+import bisect
 import datetime, pytz
 import numpy as np
 import hungarian
@@ -52,6 +53,7 @@ class TrackGenerator():
         self.tracklet_cost_fn = tracklet_cost_fn
         self.closed_tracklet_queue = [] # New tracklets are first collected and then processed in bulk.
         self.closed_tracklet_queue_first_end_timestamp = None
+        self.closed_tracklet_queue_begin_timestamps = []
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
@@ -79,6 +81,7 @@ class TrackGenerator():
     def process_closed_tracklet_queue(self):
         queue = self.closed_tracklet_queue
         self.closed_tracklet_queue = []
+        self.closed_tracklet_queue_begin_timestamps = []
         self.closed_tracklet_queue_first_end_timestamp = None
         yield from self.push_tracklets(queue)
 
@@ -113,9 +116,9 @@ class TrackGenerator():
             self.closed_tracklet_queue_first_end_timestamp = min(self.closed_tracklet_queue_first_end_timestamp, first_end_timestamp)
         
         self.closed_tracklet_queue += closed_tracklets
+        self.closed_tracklet_queue_begin_timestamps += [t.timestamps[0] for t in closed_tracklets]
 
     def push_tracklets(self, tracklets):
-        
         assert len(self.closed_tracklet_queue) == 0
 
         tracklets = list(tracklets)
@@ -171,20 +174,43 @@ class TrackGenerator():
             print("\tLinked {}/{} pushed tracklets.".format(len(linked_track_indices), len(tracklets)))
 
         # Possibly close tracks that have been open for too long.
-        minimum_open_tracklet_datetime = self.tracklet_generator.get_minimum_open_tracklet_begin()
-        if minimum_open_tracklet_datetime is not None:
+        gaps = []
+        closed = 0
+        open_tracklet_datetimes = self.tracklet_generator.get_all_open_tracklet_begin_timestamps()
+        open_tracklet_datetimes = sorted(open_tracklet_datetimes + self.closed_tracklet_queue_begin_timestamps)
+        if len(open_tracklet_datetimes) > 0:
             old_open_tracks = self.open_tracks
             self.open_tracks = []
             for idx, track in enumerate(old_open_tracks):
                 if idx in linked_track_indices:
                     self.open_tracks.append(track)
                 else:
-                    gap_duration_seconds = (minimum_open_tracklet_datetime - track.timestamps[-1]).total_seconds()
-                    if gap_duration_seconds > self.max_seconds_gap:
-                        yield self.finalize_track(track)
-                    else:
+                    was_closed = False
+                    track_end_datetime = track.timestamps[-1]
+                    idx = bisect.bisect_right(open_tracklet_datetimes, track_end_datetime)
+                    if idx < len(open_tracklet_datetimes):
+                        next_open_tracklet_datetime = open_tracklet_datetimes[idx]
+                        gap_duration_seconds = (next_open_tracklet_datetime - track_end_datetime).total_seconds()
+                        gaps.append(gap_duration_seconds)
+                        if gap_duration_seconds > self.max_seconds_gap:
+                            yield self.finalize_track(track)
+                            was_closed = True
+                            closed += 1
+                    if not was_closed:
                         self.open_tracks.append(track)
 
+        if False:
+            min_dt, max_dt = None, None
+            if len(open_tracklet_datetimes) > 0:
+                min_dt, max_dt = open_tracklet_datetimes[0].isoformat(), open_tracklet_datetimes[-1].isoformat()
+            print("Closed {} tracks. Min open track datetime: {}. Max open track datetime: {}. Open tracks: {}.".format(
+                closed, min_dt, max_dt,
+                len(self.open_tracks)))
+            import seaborn as sns
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(20, 4))
+            sns.distplot(gaps, ax=ax)
+            plt.show()
         # Add unmatched tracklets as new open tracks.
         for i, tracklet in enumerate(tracklets):
             if i not in linked_tracklet_indices:

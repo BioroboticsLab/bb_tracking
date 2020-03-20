@@ -60,10 +60,10 @@ class TrackletGenerator():
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
-        self.minimum_open_tracklet_begin = None
+        self.open_tracklet_begin_timestamps = []
     
-    def get_minimum_open_tracklet_begin(self):
-        return self.minimum_open_tracklet_begin
+    def get_all_open_tracklet_begin_timestamps(self):
+        return self.open_tracklet_begin_timestamps
 
     def finalize_all(self):
         yield from self.open_tracklets
@@ -71,6 +71,8 @@ class TrackletGenerator():
 
     def push_detections_as_new_tracklets(self, detections, frame_id, frame_datetime):
         for detection in detections:
+            self.open_tracklet_begin_timestamps.append(frame_datetime)
+            
             self.open_tracklets.append(types.Track(generate_random_track_id(), self.cam_id,
                                              [detection], [frame_datetime], [frame_id], None, dict()))
 
@@ -132,18 +134,17 @@ class TrackletGenerator():
 
             assert tracklet_idx not in linked_tracklet_indices
             assert detection_idx not in linked_detection_indices
-
+            
             linked_tracklet_indices.add(tracklet_idx)
             linked_detection_indices.add(detection_idx)
 
         # Uncontinued tracklets are closed.
-        self.minimum_open_tracklet_begin = None
+        self.open_tracklet_begin_timestamps = []
         old_open_tracklets = self.open_tracklets
         self.open_tracklets = []
         for idx, tracklet in enumerate(old_open_tracklets):
             if idx in linked_tracklet_indices:
-                if self.minimum_open_tracklet_begin is None or (tracklet.timestamps[0] < self.minimum_open_tracklet_begin):
-                    self.minimum_open_tracklet_begin = tracklet.timestamps[0]
+                self.open_tracklet_begin_timestamps.append(tracklet.timestamps[0])
                 self.open_tracklets.append(tracklet)
             else:
                 yield tracklet
