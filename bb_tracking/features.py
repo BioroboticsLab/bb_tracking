@@ -18,6 +18,20 @@ def detection_distance(detection0, detection1, norm=np.nan):
     return euclidean_distance(detection0.x_hive, detection0.y_hive, detection1.x_hive, detection1.y_hive) \
             / norm
 
+@numba.njit
+def temporal_distance_vectorized_(t0, t1, matrix):
+    for i in range(t0.shape[0]):
+        for j in range(t1.shape[0]):
+            matrix[i, j] = t1[j, 0] - t0[i, 0]
+
+def temporal_distance_vectorized(t0, t1):
+    """Takes two column vectors t0, t1 and returns t1[j] - t0[i] in a cdist-like matrix.
+    Faster than scipy.spatial.cdist.
+    """
+    m = np.zeros(shape=[t0.shape[0], t1.shape[0]], dtype=np.float32)
+    temporal_distance_vectorized_(t0, t1, m)
+    return m
+
 def detection_raw_distance_vectorized(detections_left, detections_right, norm=None):
     coordinates_left = np.nan * np.zeros(shape=(len(detections_left), 3))
     for idx, detection in enumerate(detections_left):
@@ -26,10 +40,8 @@ def detection_raw_distance_vectorized(detections_left, detections_right, norm=No
     coordinates_right = np.nan * np.zeros(shape=(len(detections_right), 3))
     for idx, detection in enumerate(detections_right):
         coordinates_right[idx] = detection.x_hive, detection.y_hive, detection.timestamp_posix
-    
     distances = scipy.spatial.distance.cdist(coordinates_left[:, :2], coordinates_right[:, :2])
-    temporal_distances = -1.0 * scipy.spatial.distance.cdist(coordinates_left[:, 2:3], coordinates_right[:, 2:3], metric=np.subtract)
-
+    temporal_distances = temporal_distance_vectorized(coordinates_left[:, 2:3], coordinates_right[:, 2:3])
     return distances, temporal_distances
 
 @numba.njit
