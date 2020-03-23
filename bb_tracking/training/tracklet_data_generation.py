@@ -14,7 +14,7 @@ from .. import features
 
 
 def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_tree, timestamp_to_index,
-                                    max_speed_per_second=400, max_gap_length_n_frames=30):
+                                    max_speed_per_second=200, max_gap_length_n_frames=30):
         
     def cut_track(track, cut_timestamp, take_left_part=True):
         if not (type(track) is types.Track):
