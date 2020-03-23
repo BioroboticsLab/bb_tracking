@@ -46,7 +46,7 @@ def fill_distance_matrix(detection0_indices, detection1_indices, distances, matr
 class TrackletGenerator():
 
     def __init__(self, cam_id, detection_feature_fn, detection_cost_fn, n_features,
-                 max_distance_per_second=10.0, max_seconds_gap=1.0, max_cost=1.0):
+                 max_distance_per_second=10.0, max_seconds_gap=0.2, max_cost=1.0):
         self.cam_id = cam_id
 
         self.n_features = n_features
@@ -60,10 +60,12 @@ class TrackletGenerator():
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
-        self.open_tracklet_begin_timestamps = []
     
-    def get_all_open_tracklet_begin_timestamps(self):
-        return self.open_tracklet_begin_timestamps
+    def get_open_tracklets(self):
+        return self.open_tracklets
+
+    def get_last_frame_datetime(self):
+        return self.last_frame_datetime
 
     def finalize_all(self):
         yield from self.open_tracklets
@@ -71,13 +73,11 @@ class TrackletGenerator():
 
     def push_detections_as_new_tracklets(self, detections, frame_id, frame_datetime):
         for detection in detections:
-            self.open_tracklet_begin_timestamps.append(frame_datetime)
-            
             self.open_tracklets.append(types.Track(generate_random_track_id(), self.cam_id,
                                              [detection], [frame_datetime], [frame_id], None, dict()))
 
     def push_frame(self, frame_id, frame_datetime, frame_detections, frame_kdtree):
-
+        
         allowed_max_distance = self.max_distance_per_second
         seconds_since_last_frame = 0.0
 
@@ -103,7 +103,7 @@ class TrackletGenerator():
                                             frame_detections, frame_kdtree, max_distance=allowed_max_distance,
                                             detection_feature_fn=self.detection_feature_fn, n_features=self.n_features,
                                             detection_cost_fn=self.detection_cost_fn)
-        
+
         if len(detection0_indices) > 0:
             distances = self.detection_cost_fn(all_features)
             detection0_indices = np.array(detection0_indices, dtype=np.int32)
@@ -139,16 +139,14 @@ class TrackletGenerator():
             linked_detection_indices.add(detection_idx)
 
         # Uncontinued tracklets are closed.
-        self.open_tracklet_begin_timestamps = []
         old_open_tracklets = self.open_tracklets
         self.open_tracklets = []
         for idx, tracklet in enumerate(old_open_tracklets):
             if idx in linked_tracklet_indices:
-                self.open_tracklet_begin_timestamps.append(tracklet.timestamps[0])
                 self.open_tracklets.append(tracklet)
             else:
                 yield tracklet
-        
+                
         # Unassigned detections become new tracklets.
         self.push_detections_as_new_tracklets((detection for idx, detection in enumerate(frame_detections) if not (idx in linked_detection_indices)),
                                               frame_id, frame_datetime)
