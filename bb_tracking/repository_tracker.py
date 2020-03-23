@@ -44,11 +44,11 @@ class CamDataGeneratorTracker():
 
 class RepositoryTracker(CamDataGeneratorTracker):
     def __init__(self, repo_path,
-                 dt_begin, dt_end, homography_fn,
+                 dt_begin, dt_end, homography_fn, repo_kwargs=dict(),
                  **kwargs):
 
         def yield_from_repository():
-            yield from data_walker.iterate_bb_binary_repository(repo_path, dt_begin, dt_end, homography_fn, no_datetime_timestamps=True)
+            yield from data_walker.iterate_bb_binary_repository(repo_path, dt_begin, dt_end, homography_fn, no_datetime_timestamps=True, **repo_kwargs)
 
         super().__init__(yield_from_repository, **kwargs)
 
