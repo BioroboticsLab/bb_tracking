@@ -46,7 +46,8 @@ def fill_distance_matrix(detection0_indices, detection1_indices, distances, matr
 class TrackletGenerator():
 
     def __init__(self, cam_id, detection_feature_fn, detection_cost_fn, n_features,
-                 max_distance_per_second=10.0, max_seconds_gap=0.2, max_cost=1.0):
+                 max_distance_per_second=10.0, max_seconds_gap=0.2, max_cost=1.0,
+                 close_tracklets_longer_than=None):
         self.cam_id = cam_id
 
         self.n_features = n_features
@@ -61,6 +62,7 @@ class TrackletGenerator():
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
+        self.close_tracklets_longer_than = close_tracklets_longer_than
     
     def get_first_open_begin_datetime(self):
         return self.open_tracklets_first_begin
@@ -147,7 +149,14 @@ class TrackletGenerator():
         self.open_tracklets = []
         self.open_tracklets_first_begin = None
         for idx, tracklet in enumerate(old_open_tracklets):
-            if idx in linked_tracklet_indices:
+            should_keep_tracklet_open = idx in linked_tracklet_indices
+            # Possibly close very long tracklets.
+            if self.close_tracklets_longer_than is not None:
+                duration = tracklet.timestamps[-1] - tracklet.timestamps[0]
+                if duration >= self.close_tracklets_longer_than:
+                    should_keep_tracklet_open = False
+
+            if should_keep_tracklet_open:
                 self.open_tracklets.append(tracklet)
 
                 if self.open_tracklets_first_begin is None or tracklet.timestamps[0] < self.open_tracklets_first_begin:
