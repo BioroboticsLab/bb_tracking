@@ -40,6 +40,7 @@ def assign_tracked_bee_id(track):
     perc = np.percentile(confidences, 90)    
     bee_id = np.median(bits[confidences >= perc, :], axis=0)
     if np.any(np.isnan(bee_id)):
+        print("Bee ID calculation failed for track {}".format(track.id))
         print(bits)
         print(bit_confidences)
         print(perc)
