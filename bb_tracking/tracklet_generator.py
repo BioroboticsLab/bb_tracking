@@ -54,6 +54,7 @@ class TrackletGenerator():
         self.detection_cost_fn = detection_cost_fn
 
         self.open_tracklets = []
+        self.open_tracklets_first_begin = None
 
         self.last_frame_datetime = None
 
@@ -61,8 +62,8 @@ class TrackletGenerator():
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
     
-    def get_open_tracklets(self):
-        return self.open_tracklets
+    def get_first_open_begin_datetime(self):
+        return self.open_tracklets_first_begin
 
     def get_last_frame_datetime(self):
         return self.last_frame_datetime
@@ -70,9 +71,12 @@ class TrackletGenerator():
     def finalize_all(self):
         yield from self.open_tracklets
         self.open_tracklets = []
+        self.open_tracklets_first_begin = None
 
     def push_detections_as_new_tracklets(self, detections, frame_id, frame_datetime):
         for detection in detections:
+            if self.open_tracklets_first_begin is None or frame_datetime < self.open_tracklets_first_begin:
+                self.open_tracklets_first_begin = frame_datetime
             self.open_tracklets.append(types.Track(generate_random_track_id(), self.cam_id,
                                              [detection], [frame_datetime], [frame_id], None, dict()))
 
@@ -141,12 +145,16 @@ class TrackletGenerator():
         # Uncontinued tracklets are closed.
         old_open_tracklets = self.open_tracklets
         self.open_tracklets = []
+        self.open_tracklets_first_begin = None
         for idx, tracklet in enumerate(old_open_tracklets):
             if idx in linked_tracklet_indices:
                 self.open_tracklets.append(tracklet)
+
+                if self.open_tracklets_first_begin is None or tracklet.timestamps[0] < self.open_tracklets_first_begin:
+                    self.open_tracklets_first_begin = tracklet.timestamps[0]
             else:
                 yield tracklet
-                
+
         # Unassigned detections become new tracklets.
         self.push_detections_as_new_tracklets((detection for idx, detection in enumerate(frame_detections) if not (idx in linked_detection_indices)),
                                               frame_id, frame_datetime)

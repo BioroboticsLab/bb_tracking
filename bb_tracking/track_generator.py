@@ -39,6 +39,11 @@ def assign_tracked_bee_id(track):
     confidences = np.mean(np.log1p(bit_confidences), axis=1)
     perc = np.percentile(confidences, 90)    
     bee_id = np.median(bits[confidences >= perc, :], axis=0)
+    if np.any(np.isnan(bee_id)):
+        print(bits)
+        print(bit_confidences)
+        print(perc)
+        return None
     bee_id = bb_utils.ids.BeesbookID.from_bb_binary(bee_id).as_ferwar()
     return bee_id
 
@@ -50,7 +55,7 @@ class TrackGenerator():
         self.tracklet_feature_fn = tracklet_feature_fn
         self.tracklet_cost_fn = tracklet_cost_fn
         self.closed_tracklet_queue = [] # New tracklets are first collected and then processed in bulk.
-        self.closed_tracklet_queue_first_end_timestamp = None
+
         self.max_cost = max_cost
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
@@ -68,22 +73,57 @@ class TrackGenerator():
         return track
 
     def finalize_all(self):
-        yield from self.process_closed_tracklet_queue()
+        if self.verbose:
+            print("Finalizing everything...", flush=True)
         closed_tracklets = self.tracklet_generator.finalize_all()
-        yield from self.push_tracklets(closed_tracklets)
+        self.closed_tracklet_queue += list(closed_tracklets)
+        yield from self.process_closed_tracklet_queue(process_all=True)
         yield from (self.finalize_track(t) for t in self.open_tracks)
         self.open_tracks = []
 
-    def process_closed_tracklet_queue(self, replace_queue=None, first_end_timestamp=None):
-        queue = self.closed_tracklet_queue
-        self.closed_tracklet_queue = []
-        self.closed_tracklet_queue_first_end_timestamp = None
+    def process_closed_tracklet_queue(self, process_all=False):
+        if self.verbose:
+            print("Processing current queue of size {}".format(len(self.closed_tracklet_queue)))
+        min_open_timestamp = self.tracklet_generator.get_first_open_begin_datetime()
+        current_timestamp = self.tracklet_generator.get_last_frame_datetime()
+        if min_open_timestamp is None:
+            min_open_timestamp = current_timestamp
+        min_open_timestamp = min(min_open_timestamp, current_timestamp)
+        close_tracks_ending_before = min_open_timestamp - datetime.timedelta(seconds=self.max_seconds_gap)
 
-        if replace_queue is not None:
-            self.closed_tracklet_queue = replace_queue
-            self.closed_tracklet_queue_first_end_timestamp = first_end_timestamp
+        self.closed_tracklet_queue = sorted(self.closed_tracklet_queue, key=lambda t: t.timestamps[0], reverse=True)
+        while True:
+            queue = []
+            min_closing_end, max_closing_begin = None, None
+            min_closing_begin = None
+            for idx in range(len(self.closed_tracklet_queue)-1, -1, -1):
+                tracklet = self.closed_tracklet_queue[idx]
+                if (not process_all) and (tracklet.timestamps[0] >= min_open_timestamp):
+                    break
+                if min_closing_end is not None:
+                    if tracklet.timestamps[0] > min_closing_end:
+                        break
+                    if tracklet.timestamps[-1] < max_closing_begin:
+                        continue
+                else:
+                    min_closing_begin = tracklet.timestamps[0]
+                assert tracklet.timestamps[0] >= min_closing_begin
 
-        yield from self.push_tracklets(queue)
+                queue.append(tracklet)
+                del self.closed_tracklet_queue[idx]
+                min_closing_end = tracklet.timestamps[-1] if min_closing_end is None else min(min_closing_end, tracklet.timestamps[-1])
+                max_closing_begin = tracklet.timestamps[0] if max_closing_begin is None else max(max_closing_begin, tracklet.timestamps[0])
+
+
+            if len(queue) > 0:
+                if self.verbose:
+                    print("Processing queue N={:5d} from {} to {}.\n\tat {}".format(len(queue), max_closing_begin, min_closing_end, min_open_timestamp))
+                close_before = close_tracks_ending_before
+                if process_all:
+                    close_before = min_closing_begin - datetime.timedelta(seconds=self.max_seconds_gap)
+                yield from self.push_tracklets(queue, close_tracks_ending_before=close_before)
+            else:
+                break
 
     def push_frame(self, *args):
         closed_tracklets = self.tracklet_generator.push_frame(*args)
@@ -91,34 +131,13 @@ class TrackGenerator():
 
         if len(closed_tracklets) == 0:
             if self.verbose:
-                print("Next frame. No new tracklets.")
+                print("Next frame. No new tracklets.", flush=True)
             return
 
-        first_end_timestamp = min(t.timestamps[-1] for t in closed_tracklets)
-        first_begin_timestamp = min(t.timestamps[0] for t in closed_tracklets)
-        
-        if self.closed_tracklet_queue_first_end_timestamp is not None:
-            queue_contains_possible_precursor_tracks = self.closed_tracklet_queue_first_end_timestamp < first_begin_timestamp
-        else:
-            queue_contains_possible_precursor_tracks = False
-        
-        if self.verbose:
-            print("Next frame. {} new tracklets. (Current processing queue: {}, open tracks: {})"
-                  "\n\tmin queue end timestamp:\t{}\n\tmin new tracklets timestamp:\t{}".format(
-                len(closed_tracklets), len(self.closed_tracklet_queue), len(self.open_tracks), self.closed_tracklet_queue_first_end_timestamp, first_begin_timestamp))
+        self.closed_tracklet_queue += closed_tracklets
+        yield from self.process_closed_tracklet_queue()
 
-        if len(self.closed_tracklet_queue) > 500 or queue_contains_possible_precursor_tracks:
-            yield from self.process_closed_tracklet_queue(replace_queue=closed_tracklets, first_end_timestamp=first_end_timestamp)
-        else:
-            self.closed_tracklet_queue += closed_tracklets
-
-        if self.closed_tracklet_queue_first_end_timestamp is None:
-            self.closed_tracklet_queue_first_end_timestamp = first_end_timestamp
-        else:
-            self.closed_tracklet_queue_first_end_timestamp = min(self.closed_tracklet_queue_first_end_timestamp, first_end_timestamp)
-        
-
-    def push_tracklets(self, tracklets):
+    def push_tracklets(self, tracklets, close_tracks_ending_before=None):
         tracklets = list(tracklets)
         if len(tracklets) == 0:
             return
@@ -174,31 +193,19 @@ class TrackGenerator():
             print("\tLinked {}/{} pushed tracklets.".format(len(linked_track_indices), len(tracklets)))
         # Possibly close tracks that have been open for too long.
         closed = 0
-        all_open_tracklets = self.tracklet_generator.get_open_tracklets() + self.closed_tracklet_queue
-        last_frame_datetime = self.tracklet_generator.get_last_frame_datetime()
-        if len(all_open_tracklets) > 0:
-            old_open_tracks = self.open_tracks
-            self.open_tracks = []
-            valid_track_indices, _ = calculate_track_pair_features(old_open_tracks, all_open_tracklets, None,
-                                                                   self.max_distance_per_second, self.max_seconds_gap, None, False)
-            valid_track_indices = set(valid_track_indices)
+        old_open_tracks = self.open_tracks
+        self.open_tracks = []
 
-            for idx, track in enumerate(old_open_tracks):
-                if idx in linked_track_indices or idx in valid_track_indices:
-                    self.open_tracks.append(track)
-                else:
-                    track_end_datetime = track.timestamps[-1]
-                    gap_duration_seconds = (last_frame_datetime - track_end_datetime).total_seconds()
-                    if gap_duration_seconds > self.max_seconds_gap:
-                        yield self.finalize_track(track)
-                        closed += 1
-                    else:
-                        self.open_tracks.append(track)
+        for idx, track in enumerate(old_open_tracks):
+            if idx in linked_track_indices or close_tracks_ending_before is None or track.timestamps[-1] >= close_tracks_ending_before:
+                self.open_tracks.append(track)
+            else:
+                yield self.finalize_track(track)
+                closed += 1
                         
         if closed > 0:
-            print("Closed {} tracks. Open tracks: {}.".format(
-                closed, 
-                len(self.open_tracks)))
+            if self.verbose:
+                print("Closed {} tracks. Open tracks: {}.".format(closed, len(self.open_tracks)))
         # Add unmatched tracklets as new open tracks.
         for i, tracklet in enumerate(tracklets):
             if i not in linked_tracklet_indices:
