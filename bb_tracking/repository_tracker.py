@@ -1,7 +1,6 @@
 
 import numba
 import numpy as np
-import prefetch_generator
 import tqdm.auto
 
 from . import types
@@ -12,12 +11,13 @@ from . import tracklet_generator
 from . import track_generator
 
 class CamDataGeneratorTracker():
-    def __init__(self, generator, cam_ids, tracklet_kwargs=dict(), track_kwargs=dict(), progress_bar=tqdm.auto.tqdm):
+    def __init__(self, generator, cam_ids, tracklet_kwargs=dict(), track_kwargs=dict(), progress_bar=tqdm.auto.tqdm, use_threading=True):
         self.cam_ids = cam_ids
         self.generator = generator
         self.tracklet_kwargs = tracklet_kwargs
         self.track_kwargs = track_kwargs
         self.progress_bar = progress_bar
+        self.use_threading = use_threading
     
     def __iter__(self):
         trackers = {cam_id: track_generator.TrackGenerator(
@@ -26,15 +26,20 @@ class CamDataGeneratorTracker():
                         for cam_id in self.cam_ids}
 
         untracked_cam_ids = set()
-        for (cam_id, frame_id, frame_datetime, frame_detections, frame_kdtree) in \
-                self.progress_bar(prefetch_generator.BackgroundGenerator(self.generator(), max_prefetch=5)):
-                if cam_id not in trackers:
-                    untracked_cam_ids.add(cam_id)
-                    continue
-                tracker = trackers[cam_id]
-                finalized_tracks = tracker.push_frame(frame_id, frame_datetime, frame_detections, frame_kdtree)
+        generator = self.generator()
+        if self.use_threading:
+            import prefetch_generator
+            generator = prefetch_generator.BackgroundGenerator(generator, max_prefetch=5)
+        if self.progress_bar is not None:
+            generator = self.progress_bar(generator)
+        for (cam_id, frame_id, frame_datetime, frame_detections, frame_kdtree) in generator:
+            if cam_id not in trackers:
+                untracked_cam_ids.add(cam_id)
+                continue
+            tracker = trackers[cam_id]
+            finalized_tracks = tracker.push_frame(frame_id, frame_datetime, frame_detections, frame_kdtree)
 
-                yield from finalized_tracks
+            yield from finalized_tracks
         
         if len(untracked_cam_ids) > 0:
             print("Found cam IDs that were not tracked: {}".format(untracked_cam_ids))
