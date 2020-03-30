@@ -245,6 +245,3 @@ def get_track_features(tracklet0, tracklet1):
 
 def track_id_match_cost(tracklet0, tracklet1):
     return detection_id_match_cost(tracklet0.detections[-1], tracklet1.detections[0])
-
-def get_track_features_id_only(tracklet0, tracklet1):
-    return (track_id_match(tracklet0, tracklet1),)
