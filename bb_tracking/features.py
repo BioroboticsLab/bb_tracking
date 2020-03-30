@@ -208,12 +208,15 @@ def extrapolate_detections(seconds, *detections):
             None, detections[1].timestamp_posix + seconds, 0,
             detections[1].detection_type, None, None, None)
 
-def track_forward_distance(tracklet0, tracklet1):
-    seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
+def track_forward_distance(tracklet0, tracklet1, seconds_distance=np.nan):
+    if np.isnan(seconds_distance):
+        seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
     return detection_distance(extrapolate_detections(seconds_distance, *tracklet0.detections[-2:]), tracklet1.detections[0], norm=1.0)
 
-def track_backward_distance(tracklet0, tracklet1):
-    seconds_distance = abs(detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0]))
+def track_backward_distance(tracklet0, tracklet1, seconds_distance=np.nan):
+    if np.isnan(seconds_distance):
+        seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
+    seconds_distance = abs(seconds_distance)
     return detection_distance(extrapolate_detections(seconds_distance, *tracklet1.detections[1::-1]), tracklet0.detections[-1], norm=1.0)
 
 def track_angular_distance(tracklet0, tracklet1):
@@ -236,10 +239,13 @@ def track_difference_of_confidence(tracklet0, tracklet1):
     return abs(track_decoder_confidence(tracklet0) - track_decoder_confidence(tracklet1))
 
 def get_track_features(tracklet0, tracklet1):
-    return (track_id_distance(tracklet0, tracklet1),
+    seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
+
+    return (seconds_distance,
+            track_id_distance(tracklet0, tracklet1),
             track_distance(tracklet0, tracklet1),
-            track_forward_distance(tracklet0, tracklet1),
-            track_backward_distance(tracklet0, tracklet1),
+            track_forward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
+            track_backward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
             track_angular_distance(tracklet0, tracklet1),
             track_difference_of_confidence(tracklet0, tracklet1))
 
