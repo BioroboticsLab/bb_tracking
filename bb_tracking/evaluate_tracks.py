@@ -3,6 +3,7 @@ import numpy as np
 import pandas
 import tqdm.auto
 
+from . import features
 from . import types
 
 def get_metrics_for_track(track, gt_track, track_false_positives):
@@ -56,30 +57,39 @@ def get_metrics_for_track(track, gt_track, track_false_positives):
 
 
 
-def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator, progress_bar=tqdm.auto.tqdm):
+def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator, progress_bar=tqdm.auto.tqdm, sanity_check=True):
 
     gt_track_id_to_track = dict()
     gt_detection_to_track_id = dict()
+    gt_detection_to_next_detection = dict()
 
     track_counter = 0
     for gt_track in progress_bar(ground_truth_track_generator, desc="Loading ground truth tracks.."):
         track_counter += 1
         gt_track_id_to_track[gt_track.id] = gt_track
+        last_detection = None
         for detection in gt_track.detections:
             if detection.frame_id not in gt_track.frame_ids:
                 print(gt_track)
             assert detection.frame_id in gt_track.frame_ids
-            gt_detection_to_track_id[(detection.frame_id, detection.detection_type, detection.detection_index)] = gt_track.id
+            detection_key = (detection.frame_id, detection.detection_type, detection.detection_index)
+            gt_detection_to_track_id[detection_key] = gt_track.id
+            
+            if last_detection is not None:
+                last_detection_key = (last_detection.frame_id, last_detection.detection_type, last_detection.detection_index)
+                gt_detection_to_next_detection[last_detection_key] = detection
+            last_detection = detection
 
-    for (fid, dtype, didx), track_id in progress_bar(gt_detection_to_track_id.items(), desc="Building detection mappings.."):
-        track = gt_track_id_to_track[track_id]
-        fids = [d.frame_id for d in track.detections]
-        if fid not in track.frame_ids:
-            print(track)
-        assert fid in fids
-        assert fid in track.frame_ids
-        det_keys = [(d.detection_type, d.detection_index) for d in track.detections]
-        assert (dtype, didx) in det_keys
+    if sanity_check:
+        for (fid, dtype, didx), track_id in progress_bar(gt_detection_to_track_id.items(), desc="Checking detection mappings.."):
+            track = gt_track_id_to_track[track_id]
+            fids = [d.frame_id for d in track.detections]
+            if fid not in track.frame_ids:
+                print(track)
+            assert fid in fids
+            assert fid in track.frame_ids
+            det_keys = [(d.detection_type, d.detection_index) for d in track.detections]
+            assert (dtype, didx) in det_keys
 
     assert len(list(gt_track_id_to_track.keys())) == track_counter
 
@@ -97,10 +107,11 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
             matching_gt_track = gt_track_id_to_track[track_id]
             yield matching_gt_track
 
-    statistics = defaultdict(float)
+    all_tracks = []
 
     all_track_stats = []
     for track in progress_bar(track_generator, desc="Matching tracks..."):
+        all_tracks.append(track)
         false_positives = [(d.frame_id, d.detection_type, d.detection_index) not in gt_detection_to_track_id for d in track.detections]
         max_score, track_stats = None, None
         for gt_track in get_all_gt_tracks_for_track(track):
@@ -110,5 +121,50 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
                 track_stats = stats
         if track_stats is not None:
             all_track_stats.append(track_stats)
+    
+    def detections_equal(d0, d1):
+        if d0 is None and d1 is None:
+            return True
+        if d0 is None or d1 is None:
+            return False
+        return (d0.frame_id == d1.frame_id) and (d0.detection_type == d1.detection_type) and (d0.detection_index == d1.detection_index)
 
-    return pandas.DataFrame(all_track_stats)
+    all_detection_stats = []
+    for track in progress_bar(all_tracks, desc="Checking follower detections..."):
+        for det_idx, detection in enumerate(track.detections):
+            detection_key = (detection.frame_id, detection.detection_type, detection.detection_index)
+
+            def pair_stats(d0, d1):
+                temporal_distance = features.detection_temporal_distance(d0, d1)
+                euclidean_distance = features.detection_distance(d0, d1, norm=temporal_distance)
+                id_match = features.detection_id_match(d0, d1)
+                return dict(
+                    type0=d0.detection_type,
+                    type1=d1.detection_type,
+                    id_match=id_match,
+                    distance_seconds=temporal_distance,
+                    euclidean_distance=euclidean_distance)
+            
+            all_info = dict()
+            
+            true_next = None
+            false_next = None
+            if detection_key in gt_detection_to_next_detection:
+                true_next = gt_detection_to_next_detection[detection_key]
+                true_features = pair_stats(detection, true_next)
+                for feat, val in true_features.items():
+                    all_info["true_" + feat] = val
+            if (det_idx < len(track.detections) - 1):
+                false_next = track.detections[det_idx + 1]
+                false_features = pair_stats(detection, false_next)
+                for feat, val in false_features.items():
+                    all_info["next_" + feat] = val
+            all_info["match"] = (((true_next is not None and false_next is not None) and (detections_equal(true_next, false_next)))
+                                or (true_next is None and false_next is None))
+            all_info["miss"] = (false_next is not None) and not detections_equal(true_next, false_next)
+            all_info["true_missing"] = true_next is None
+            all_info["next_missing"] = false_next is None
+
+            all_detection_stats.append(all_info)
+
+    return pandas.DataFrame(all_track_stats), pandas.DataFrame(all_detection_stats)
