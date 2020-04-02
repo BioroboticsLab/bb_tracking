@@ -173,8 +173,8 @@ def track_mean_id(tracklet):
 def track_id_distance(tracklet0, tracklet1):
     return bitwise_manhattan_distance(track_mean_id(tracklet0), track_mean_id(tracklet1))
 
-def track_distance(tracklet0, tracklet1):
-    return detection_distance(tracklet0.detections[-1], tracklet1.detections[0])
+def track_distance(tracklet0, tracklet1, norm=np.nan):
+    return detection_distance(tracklet0.detections[-1], tracklet1.detections[0], norm=norm)
 
 @numba.njit
 def short_angle_dist(a0,a1):
@@ -240,10 +240,11 @@ def track_difference_of_confidence(tracklet0, tracklet1):
 
 def get_track_features(tracklet0, tracklet1):
     seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
+    raw_track_distance = track_distance(tracklet0, tracklet1, norm=1.0)
 
-    return (seconds_distance,
+    return (seconds_distance, raw_track_distance,
             track_id_distance(tracklet0, tracklet1),
-            track_distance(tracklet0, tracklet1),
+            raw_track_distance / seconds_distance,
             track_forward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
             track_backward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
             track_angular_distance(tracklet0, tracklet1),
