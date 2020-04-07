@@ -9,7 +9,7 @@ import bb_behavior.io
 import bb_behavior.utils
 
 def load_ground_truth_tracks(data_path,
-                            repository_path):
+                            repository_path, **kwargs):
     """Loads tracks (types.Track) from the results of the ground-truth creation process using the editor UI.
     Takes a .pickle file and a repository and merges the repositories' detections into tracks as merged by the user.
     The bee_id of the tracks will be the user-assigned ID.
@@ -19,6 +19,8 @@ def load_ground_truth_tracks(data_path,
             Path to the .pickle file that contains the ground-truth as saved by the editor UI.
         repository_path:
             Path to the bb_binary repository that was used in the editor to create the ground truth.
+        kwargs:
+            Additional keyword arguments are passed to iterate_bb_binary_repository.
     """
     with open(data_path, "rb") as f:
         ground_truth_data = pickle.load(f)
@@ -46,7 +48,7 @@ def load_ground_truth_tracks(data_path,
 
     for frame_index, (cam_id, frame_id, frame_datetime, frame_detections, _) in enumerate(
                     data_walker.iterate_bb_binary_repository(repository_path,
-                                dt_begin, None, cam_id=cam_id)):
+                                dt_begin, None, cam_id=cam_id, **kwargs)):
         if frame_index < start_frame_index:
             continue
         if frame_index > end_frame_index:
@@ -180,8 +182,8 @@ def merge_tracks(sets, verbose=True):
     all_tracks = list(sorted(all_tracks, key=lambda t: t.timestamps[0]))
     return all_tracks
 
-def load_and_merge_ground_truth_tracks(ground_truth_paths, ground_truth_repos_path, verbose=True):
-    track_sets = [load_ground_truth_tracks(path, ground_truth_repos_path)
+def load_and_merge_ground_truth_tracks(ground_truth_paths, ground_truth_repos_path, verbose=True, **kwargs):
+    track_sets = [load_ground_truth_tracks(path, ground_truth_repos_path, **kwargs)
                   for path in ground_truth_paths]
     while len(track_sets) > 1:
         new_set = merge_tracks(track_sets[:2], verbose=verbose)
