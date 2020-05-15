@@ -25,10 +25,17 @@ def make_detection(bee, H=None, frame_id=None, timestamp=None, orientation=np.na
     x, y = bee.xpos, bee.ypos
     x_hive, y_hive, orientation_hive = get_hive_coordinates(x, y, orientation, H)
     localizerSaliency = np.nan if is_truth else bee.localizerSaliency
+    
+    has_posix_timestamp = isinstance(timestamp, (float, np.floating))
+    if not has_posix_timestamp:
+        posix_timestamp = timestamp.timestamp()
+    else:
+        posix_timestamp = timestamp
 
-    posix_timestamp = timestamp.timestamp()
     if no_datetime_timestamps:
         timestamp = None
+    elif has_posix_timestamp:
+        timestamp = datetime.datetime.fromtimestamp(posix_timestamp, tz=pytz.UTC)
 
     return types.Detection(x, y, orientation, 
                            x_hive, y_hive, orientation_hive,
