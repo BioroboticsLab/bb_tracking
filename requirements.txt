@@ -1,8 +1,13 @@
 numpy
 pandas
 numba
-psycopg2
+# As this list is commonly passed to pip, use the package that can also be installed from pip..
+psycopg2-binary
 scikit-learn
 torch
 torchvision
 matplotlib
+# The hungarian packages probably has to be manually installed by following the instructions:
+# https://github.com/hrldcpr/hungarian.git
+hungarian
+xgboost
