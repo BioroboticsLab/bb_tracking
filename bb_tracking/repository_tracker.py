@@ -26,7 +26,11 @@ class CamDataGeneratorTracker():
                         for cam_id in self.cam_ids}
 
         untracked_cam_ids = set()
-        generator = self.generator()
+        try: # Accepts both generators and functions that return a generator when called.
+            generator = self.generator()
+        except:
+            generator = self.generator
+            
         if self.use_threading:
             import prefetch_generator
             generator = prefetch_generator.BackgroundGenerator(generator, max_prefetch=5)
