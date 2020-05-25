@@ -85,6 +85,9 @@ class TrackGenerator():
     def process_closed_tracklet_queue(self, process_all=False):
         if self.verbose:
             print("Processing current queue of size {}".format(len(self.closed_tracklet_queue)))
+        if len(self.closed_tracklet_queue) == 0:
+            return
+            
         min_open_timestamp = self.tracklet_generator.get_first_open_begin_datetime()
         current_timestamp = self.tracklet_generator.get_last_frame_datetime()
         if min_open_timestamp is None:
