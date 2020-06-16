@@ -157,21 +157,42 @@ def detection_id_match_cost(detection0, detection1):
 def get_detection_features_id_only(detection0, detection1):
     return (detection_id_match(detection0, detection1),)
 
-def track_mean_id(tracklet):
-    if "track_mean_id" in tracklet.cache_:
-        return tracklet.cache_["track_mean_id"]
+def track_median_id(tracklet):
+    if "track_median_id" in tracklet.cache_:
+        return tracklet.cache_["track_median_id"]
 
     tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
     if tracklet_bits.shape[0] == 0:
         mean_id = None
     else:
-        mean_id = np.mean(tracklet_bits, axis=0)
+        mean_id = np.median(tracklet_bits, axis=0)
 
-    tracklet.cache_["track_mean_id"] = mean_id
+    tracklet.cache_["track_median_id"] = mean_id
     return mean_id
 
-def track_id_distance(tracklet0, tracklet1):
-    return bitwise_manhattan_distance(track_mean_id(tracklet0), track_mean_id(tracklet1))
+def track_stable_id(tracklet):
+    if "track_stable_id" in tracklet.cache_:
+        return tracklet.cache_["track_stable_id"]
+
+    tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
+    if tracklet_bits.shape[0] == 0:
+        track_id = None
+    else:
+        bit_confidences = np.abs(tracklet_bits - 0.5) * 2.0
+        confidences = np.mean(np.log1p(bit_confidences), axis=1)
+        confidences_idx = np.argsort(confidences)[::1]
+        N = max(5, tracklet_bits.shape[0] // 10)
+        good_bits = tracklet_bits[confidences_idx, :]
+        track_id = np.median(good_bits, axis=0)
+
+    tracklet.cache_["track_stable_id"] = track_id
+    return track_id
+
+def track_median_id_distance(tracklet0, tracklet1):
+    return bitwise_manhattan_distance(track_median_id(tracklet0), track_median_id(tracklet1))
+
+def track_stable_id_distance(tracklet0, tracklet1):
+    return bitwise_manhattan_distance(track_stable_id(tracklet0), track_stable_id(tracklet1))
 
 def track_distance(tracklet0, tracklet1, norm=np.nan):
     return detection_distance(tracklet0.detections[-1], tracklet1.detections[0], norm=norm)
@@ -243,7 +264,8 @@ def get_track_features(tracklet0, tracklet1):
     raw_track_distance = track_distance(tracklet0, tracklet1, norm=1.0)
 
     return (seconds_distance, raw_track_distance,
-            track_id_distance(tracklet0, tracklet1),
+            track_median_id_distance(tracklet0, tracklet1),
+            track_stable_id_distance(tracklet0, tracklet1),
             raw_track_distance / seconds_distance,
             track_forward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
             track_backward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),

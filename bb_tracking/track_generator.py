@@ -37,14 +37,18 @@ def assign_tracked_bee_id(track):
     bits = np.stack(bits, axis=0)
     bit_confidences = np.abs(bits - 0.5) * 2.0
     confidences = np.mean(np.log1p(bit_confidences), axis=1)
-    perc = np.percentile(confidences, 90)    
-    bee_id = np.median(bits[confidences >= perc, :], axis=0)
+    confidences_idx = np.argsort(confidences)[::1]
+    N = max(5, bits.shape[0] // 10)
+    good_bits = bits[confidences_idx, :]
+    bee_id = np.median(good_bits, axis=0)
     if np.any(np.isnan(bee_id)):
         print("Bee ID calculation failed for track {}".format(track.id))
         print(bits)
         print(bit_confidences)
         print(perc)
         return None
+    
+    bee_id_confidence = np.prod(np.abs(bee_id - 0.5) * 2.0)
     bee_id = bb_utils.ids.BeesbookID.from_bb_binary(bee_id).as_ferwar()
     return bee_id
 
@@ -87,7 +91,7 @@ class TrackGenerator():
             print("Processing current queue of size {}".format(len(self.closed_tracklet_queue)))
         if len(self.closed_tracklet_queue) == 0:
             return
-            
+
         min_open_timestamp = self.tracklet_generator.get_first_open_begin_datetime()
         current_timestamp = self.tracklet_generator.get_last_frame_datetime()
         if min_open_timestamp is None:
