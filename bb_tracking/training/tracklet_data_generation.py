@@ -63,7 +63,7 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
                 target = int(candidate.id == right_track.id)
                 last_candidate_cut_timestamp_index = min(right_track_first_timestamp_index - 1, timestamp_to_index[candidate.timestamps[-1]])
 
-                earliest_allowed_cut_index = right_track_first_timestamp_index - 1 - max_gap_length_n_frames
+                earliest_allowed_cut_index = max(1, right_track_first_timestamp_index - 1 - max_gap_length_n_frames)
                 max_gap = last_candidate_cut_timestamp_index - earliest_allowed_cut_index
                 if max_gap <= 0:
                     continue
@@ -87,7 +87,7 @@ def generate_features_for_timestamp(timestamp, current_tracks, candidate_tracks_
                     else:
                         continue
                     candidate_cut_timestamp = all_timestamps[last_candidate_cut_timestamp_index - gap + 1]
-                    
+
                 assert last_candidate_cut_timestamp_index < right_track_first_timestamp_index
                 if candidate_cut_timestamp > timestamp:
                     continue
