@@ -45,6 +45,7 @@ def get_metrics_for_track(track, gt_track, track_false_positives):
     stats["deletes"] = ((pandas.isnull(df.idx_detection)) & (~pandas.isnull(df.idx_gt))).sum()
     stats["n_gaps"] = df.shape[0] - stats["n_detections"]
     stats["correct_track_id"] = int(track.bee_id == gt_track.bee_id)
+    stats["track_id_confidence"] = track.bee_id_confidence
     stats["correct_detection_id_all"] = stats["correct_track_id"] * stats["n_detections"]
     stats["correct_detection_id"] = stats["correct_track_id"] * stats["n_detections_with_ids"]
 
@@ -56,9 +57,7 @@ def get_metrics_for_track(track, gt_track, track_false_positives):
     return track_score, stats
 
 
-
-def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator, progress_bar=tqdm.auto.tqdm, sanity_check=True):
-
+def prepare_ground_truth_track_mapping(ground_truth_track_generator, progress_bar=tqdm.auto.tqdm, sanity_check=True):
     gt_track_id_to_track = dict()
     gt_detection_to_track_id = dict()
     gt_detection_to_next_detection = dict()
@@ -107,8 +106,14 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
             matching_gt_track = gt_track_id_to_track[track_id]
             yield matching_gt_track
 
-    all_tracks = []
+    return gt_track_id_to_track, gt_detection_to_track_id, gt_detection_to_next_detection, get_all_gt_tracks_for_track
 
+def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator, progress_bar=tqdm.auto.tqdm, sanity_check=True):
+    
+    gt_track_id_to_track, gt_detection_to_track_id, gt_detection_to_next_detection, get_all_gt_tracks_for_track = \
+        prepare_ground_truth_track_mapping(ground_truth_track_generator, progress_bar=progress_bar, sanity_check=sanity_check)
+    
+    all_tracks = []
     all_track_stats = []
     for track in progress_bar(track_generator, desc="Matching tracks..."):
         all_tracks.append(track)
@@ -164,7 +169,7 @@ def calculate_metrics_for_tracking(track_generator, ground_truth_track_generator
             all_info["miss"] = (false_next is not None) and not detections_equal(true_next, false_next)
             all_info["true_missing"] = true_next is None
             all_info["next_missing"] = false_next is None
-
+            all_info["track_id_confidence"] = track.bee_id_confidence
             all_detection_stats.append(all_info)
 
     return pandas.DataFrame(all_track_stats), pandas.DataFrame(all_detection_stats)
