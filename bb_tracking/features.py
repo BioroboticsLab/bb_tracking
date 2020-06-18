@@ -82,6 +82,8 @@ def bitwise_distance(bits0, bits1, fun):
         return np.nan
     elif bits0 is None or bits1 is None:
         return np.nan
+    assert not np.any(np.isnan(bits0))
+    assert not np.any(np.isnan(bits1))
     return fun(np.abs(np.array(bits0) - np.array(bits1)))
 
 def bitwise_manhattan_distance(bits0, bits1):
@@ -162,6 +164,7 @@ def track_median_id(tracklet):
         return tracklet.cache_["track_median_id"]
 
     tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
+    assert not np.any(np.isnan(tracklet_bits))
     if tracklet_bits.shape[0] == 0:
         mean_id = None
     else:
@@ -175,13 +178,14 @@ def track_stable_id(tracklet):
         return tracklet.cache_["track_stable_id"]
 
     tracklet_bits = np.array([d.bit_probabilities for d in tracklet.detections if d.detection_type == types.DetectionType.TaggedBee])
+    assert not np.any(np.isnan(tracklet_bits))
     if tracklet_bits.shape[0] == 0:
         track_id = None
     else:
         bit_confidences = np.abs(tracklet_bits - 0.5) * 2.0
         confidences = np.mean(np.log1p(bit_confidences), axis=1)
-        confidences_idx = np.argsort(confidences)[::1]
         N = max(5, tracklet_bits.shape[0] // 10)
+        confidences_idx = np.argsort(confidences)[::-1][:N]
         good_bits = tracklet_bits[confidences_idx, :]
         track_id = np.median(good_bits, axis=0)
 
@@ -266,6 +270,7 @@ def get_track_features(tracklet0, tracklet1):
     return (seconds_distance, raw_track_distance,
             track_median_id_distance(tracklet0, tracklet1),
             track_stable_id_distance(tracklet0, tracklet1),
+            detection_id_distance(tracklet0.detections[-1], tracklet1.detections[0]),
             raw_track_distance / seconds_distance,
             track_forward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
             track_backward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
