@@ -27,18 +27,18 @@ def calculate_track_pair_features(open_tracks, new_tracklets, tracklet_feature_f
         all_features[i] = tracklet_pair_features
     return tracklets0_indices, tracklets1_indices, all_features
 
-def assign_tracked_bee_id(track):
+def calculate_tracked_bee_id(track):
     bits = []
     for detection in track.detections:
         if detection.detection_type == types.DetectionType.TaggedBee:
             bits.append(detection.bit_probabilities)
     if len(bits) == 0:
-        return None
+        return None, None
     bits = np.stack(bits, axis=0)
     bit_confidences = np.abs(bits - 0.5) * 2.0
     confidences = np.mean(np.log1p(bit_confidences), axis=1)
-    confidences_idx = np.argsort(confidences)[::1]
     N = max(5, bits.shape[0] // 10)
+    confidences_idx = np.argsort(confidences)[::-1][:N]
     good_bits = bits[confidences_idx, :]
     bee_id = np.median(good_bits, axis=0)
     if np.any(np.isnan(bee_id)):
@@ -46,11 +46,11 @@ def assign_tracked_bee_id(track):
         print(bits)
         print(bit_confidences)
         print(perc)
-        return None
+        return None, None
     
     bee_id_confidence = np.prod(np.abs(bee_id - 0.5) * 2.0)
     bee_id = bb_utils.ids.BeesbookID.from_bb_binary(bee_id).as_ferwar()
-    return bee_id
+    return bee_id, bee_id_confidence
 
 class TrackGenerator():
     def __init__(self, tracklet_generator, n_features, tracklet_feature_fn, tracklet_cost_fn,
@@ -69,8 +69,8 @@ class TrackGenerator():
         self.open_tracks = []
 
     def finalize_track(self, track):
-        tracked_bee_id = assign_tracked_bee_id(track)
-        track = track._replace(bee_id = tracked_bee_id)
+        tracked_bee_id, tracked_bee_id_confidence = calculate_tracked_bee_id(track)
+        track = track._replace(bee_id = tracked_bee_id, bee_id_confidence=tracked_bee_id_confidence)
 
         for idx, detection in enumerate(track.detections):
             if detection.timestamp is None:

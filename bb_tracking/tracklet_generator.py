@@ -80,7 +80,7 @@ class TrackletGenerator():
             if self.open_tracklets_first_begin is None or frame_datetime < self.open_tracklets_first_begin:
                 self.open_tracklets_first_begin = frame_datetime
             self.open_tracklets.append(types.Track(generate_random_track_id(), self.cam_id,
-                                             [detection], [frame_datetime], [frame_id], None, dict()))
+                                             [detection], [frame_datetime], [frame_id], None, None, dict()))
 
     def push_frame(self, frame_id, frame_datetime, frame_detections, frame_kdtree):
         

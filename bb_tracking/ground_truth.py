@@ -66,7 +66,7 @@ def load_ground_truth_tracks(data_path,
 
             # New path?
             if path_id not in result_paths:
-                path = types.Track(path_id, cam_id, [], [], [], ground_truth_bee_ids[path_id], dict())
+                path = types.Track(path_id, cam_id, [], [], [], ground_truth_bee_ids[path_id], None, dict())
                 result_paths[path_id] = path
             else:
                 path = result_paths[path_id]

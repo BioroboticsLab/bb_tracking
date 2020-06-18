@@ -32,7 +32,7 @@ def convert_track(old_track : bb_tracking.data.datastructures.Track, H):
     frame_ids = [generate_random_track_id() for _ in range(len(datetimes))]
     detections = [convert_detection(d, H=H) for d in old_track.meta["detections"]]
 
-    return types.Track(generate_random_track_id(), cam_id, detections, datetimes, frame_ids, None, dict())
+    return types.Track(generate_random_track_id(), cam_id, detections, datetimes, frame_ids, None, None, dict())
 
 def load_ground_truth_tracks(path="/mnt/storage/beesbook/learning_data/learning_fragments_framediff17_dataset20150918_Truth.p",
                                 N=None,

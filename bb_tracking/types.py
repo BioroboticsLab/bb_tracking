@@ -24,7 +24,7 @@ Track = collections.namedtuple("Track",
                  "detections", # List of Detection objects.
                  "timestamps", # List of UTC datetime.datetime objects.
                  "frame_ids", # List of frame IDs, matching the timestamps and detections.
-                 "bee_id",
+                 "bee_id", "bee_id_confidence",
                  "cache_", # Dictionary with helpful tracking caches.
                 ])
 
