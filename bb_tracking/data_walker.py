@@ -46,16 +46,54 @@ def make_detection(bee, H=None, frame_id=None, timestamp=None, orientation=np.na
 
 def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_fn=None,
                                  is_truth_repos=False, only_tagged_bees=False, cam_id=None,
-                                 is_2019_repos=True, no_datetime_timestamps=False):
+                                 is_2019_repos=True, no_datetime_timestamps=False, fix_negative_timestamps=False):
+    """ Iterates over a bb_binary repository, yielding the data in the format required for tracking.
+
+    Arguments:
+        repository_path: string
+            Path to bb_binary repository.
+        dt_begin, dt_end: datetime.datetime
+            Optional timestamps for which to query the data.
+        homography_fn: callable
+            Callable taking cam_id, datetime and returning a homography matrix that is then applied to the pixel coordinates before tracking.
+        is_truth_repos: bool
+            Whether to load truth detections instead of pipeline detections.
+        only_tagged_bees: bool
+            Whether to skip loading untagged bees.
+        cam_id: int
+            Optional. Whether to filter for camera ID.
+        is_2019_repos: bool
+            Default True. If False, assume 2016 bb_binary format.
+        no_datetime_timestamps: bool
+            Default False. Whether to skip parsing the posix timestamps contained in the bb_binary format.
+            These will be set after tracking.
+        fix_negative_timestamps: bool
+            Default False. Whether to linearly interpolate timestamps within a video between the first and last one
+            in case there are negative jumps or the same timestamp twice.
+
+    Returns:
+        (cam_id, frame_id, frame_datetime,
+                    frame_detections, frame_kdtree)
+            Yields tuples for each frame of the bb_binary repository.
+    """
     repo = bb_binary.Repository(repository_path)
 
     for fc_path in repo.iter_fnames(begin=dt_begin, end=dt_end, cam=cam_id):
         fc = bb_binary.load_frame_container(fc_path)
         cam_id = fc.camId
 
-        for frame in fc.frames:
+        # Timstamps are in posix format. In 2019 we had the oddity that some frames (i.e. ONE single frame) jump backwards
+        # due to NTP/camera timestamp shenanigans. Note that this interpolation only corrects for
+        # jumps within a frame container (i.e. a video).
+        framecontainer_timestamps = [f.timestamp for f in fc.frames]
+        if fix_negative_timestamps:
+            framecontainer_timestamps_diffs = np.array([framecontainer_timestamps[i] - framecontainer_timestamps[i - 1] for i in range(1, len(framecontainer_timestamps))])
+            if np.any(framecontainer_timestamps_diffs <= 0):
+                framecontainer_timestamps = np.linspace(framecontainer_timestamps[0], framecontainer_timestamps[-1], num=len(framecontainer_timestamps), dtype=np.float64)
+        assert len(framecontainer_timestamps) == len(fc.frames)
+
+        for frame, frame_timestamp in zip(fc.frames, framecontainer_timestamps):
             frame_id = frame.id
-            frame_timestamp = frame.timestamp
             frame_datetime = pytz.UTC.localize(datetime.datetime.utcfromtimestamp(frame_timestamp))
             if (dt_begin is not None) and (frame_datetime < dt_begin):
                 continue
