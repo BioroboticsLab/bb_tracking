@@ -1,38 +1,67 @@
 from .. import data_walker
 from .. import features
+from .. import types
 
 import concurrent.futures
 import datetime
 import pytz
 import tqdm.auto
 
+def is_valid_detection_pair_combination(det, next_det):
+    """
+    The GT data contains some odd combinations that, while being present in the real data due do pipeline oddities,
+    are not helpful for the models, leading to more false positives.
+    """
+    # Skip tag->no tag or no tag->tag transitions.
+    if (((det.detection_type == types.DetectionType.TaggedBee) and (next_det.detection_type == types.DetectionType.UntaggedBee)) or
+        ((det.detection_type == types.DetectionType.UntaggedBee) and (next_det.detection_type == types.DetectionType.TaggedBee))):
+        return False
+    # Same for glass<->cell transitions.
+    if (((det.detection_type == types.DetectionType.BeeOnGlass) and (next_det.detection_type == types.DetectionType.BeeInCell)) or
+        ((det.detection_type == types.DetectionType.BeeInCell) and (next_det.detection_type == types.DetectionType.BeeOnGlass))):
+        return False
+    # Same for glass<->tag transitions. We don't have as much data for that as we would need for a good model.
+    if (((det.detection_type == types.DetectionType.BeeOnGlass) and (next_det.detection_type == types.DetectionType.TaggedBee)) or
+        ((det.detection_type == types.DetectionType.TaggedBee) and (next_det.detection_type == types.DetectionType.BeeOnGlass))):
+        return False
+    return True
+
 def are_same_detections(d0, d1):
     return d0.frame_id == d1.frame_id \
         and d0.detection_type == d1.detection_type \
         and d0.detection_index == d1.detection_index
 
-def generate_detection_features_for_frame(detection, follow_up_detection, candidate_detections, distance_per_second_hard_limit):
+def generate_detection_features_for_frame(tracklet, follow_up_detection, candidate_detections, distance_per_second_hard_limit):
+
+    detection = tracklet.detections[-1]
 
     results = []
     
-    if follow_up_detection is not None:
-        detection_features = features.get_detection_features(detection, follow_up_detection)
-        results.append((detection_features, 1, (detection.frame_id, detection.detection_index, detection.x_pixels, detection.y_pixels,
-                                                follow_up_detection.detection_index, follow_up_detection.x_pixels, follow_up_detection.y_pixels)))
+    for i in range(2):
+        if i == 1:
+            tracklet = tracklet._replace(
+                                detections=tracklet.detections[-1:],
+                                timestamps=tracklet.timestamps[-1:],
+                                frame_ids=tracklet.frame_ids[-1:])
 
-    for candidate_detection in candidate_detections:
-        if follow_up_detection is not None and are_same_detections(candidate_detection, follow_up_detection):
-            continue
-        detection_features = features.get_detection_features(detection, candidate_detection)
-        # Check distance hard limit.
-        if detection_features[0] > distance_per_second_hard_limit:
-            continue
-        results.append((detection_features, 0, (detection.frame_id, detection.detection_index, detection.x_pixels, detection.y_pixels,
-                                                candidate_detection.detection_index, candidate_detection.x_pixels, candidate_detection.y_pixels)))
+        if follow_up_detection is not None:
+            detection_features = features.get_detection_features(tracklet, follow_up_detection)
+            results.append((detection_features, 1, (detection.frame_id, detection.detection_index, detection.x_pixels, detection.y_pixels,
+                                                    follow_up_detection.detection_index, follow_up_detection.x_pixels, follow_up_detection.y_pixels)))
+
+        for candidate_detection in candidate_detections:
+            if follow_up_detection is not None and are_same_detections(candidate_detection, follow_up_detection):
+                continue
+            detection_features = features.get_detection_features(tracklet, candidate_detection)
+            # Check distance hard limit.
+            if detection_features[0] > distance_per_second_hard_limit:
+                continue
+            results.append((detection_features, 0, (detection.frame_id, detection.detection_index, detection.x_pixels, detection.y_pixels,
+                                                    candidate_detection.detection_index, candidate_detection.x_pixels, candidate_detection.y_pixels)))
     
     return results
 
-def generate_detection_features(gt_tracks, repository_path, cam_id, homography_fn, distance_per_second_hard_limit=20.0):
+def generate_detection_features(gt_tracks, repository_path, cam_id, homography_fn, distance_per_second_hard_limit=30.0):
     timestamp_minmax = None
  
     for track in gt_tracks:
@@ -66,14 +95,25 @@ def generate_detection_features(gt_tracks, repository_path, cam_id, homography_f
     
     
     follow_up_detection_map = dict()
+    det_to_tracklet = dict()
 
     for track in gt_tracks:
-        for det_idx in range(len(track.detections) - 1):
-            det, next_det = track.detections[det_idx], track.detections[det_idx+1]
+        for det_idx in range(len(track.detections)):
+            det = track.detections[det_idx]
+            det_track = track._replace(detections=track.detections[:det_idx+1],
+                                        timestamps=track.timestamps[:det_idx+1],
+                                        frame_ids=track.frame_ids[:det_idx+1])
+            detection_key = (det.frame_id, det.detection_type, det.detection_index)
+            det_to_tracklet[detection_key] = det_track
+
+            if det_idx == len(track.detections) - 1:
+                continue
+            next_det = track.detections[det_idx+1]
             if next_frame_dict[det.frame_id] != next_det.frame_id:
                 continue
-            follow_up_detection_map[(det.frame_id, det.detection_type, det.detection_index)] = \
-                next_det
+            if not is_valid_detection_pair_combination(det, next_det):
+                continue
+            follow_up_detection_map[detection_key] = next_det
     print("{} detection pairs available.".format(len(follow_up_detection_map)))
     
     future_results = []
@@ -94,12 +134,22 @@ def generate_detection_features(gt_tracks, repository_path, cam_id, homography_f
                     det_key = (detection.frame_id, detection.detection_type, detection.detection_index)
                     if det_key in follow_up_detection_map:
                         follow_up = follow_up_detection_map[det_key]
-                        
-                    future_results.append(executor.submit(generate_detection_features_for_frame,
-                                                   detection, follow_up,
+                    
+                    if det_key in det_to_tracklet:
+                        det_tracklet = det_to_tracklet[det_key]
+                    else:
+                        det_tracklet = types.Track(id=0,
+                                                    cam_id=0,
+                                                    detections=[detection],
+                                                    timestamps=[detection.timestamp],
+                                                    frame_ids=[frame_id],
+                                                    bee_id=None, bee_id_confidence=None, cache_=dict())
+                    future_results.append(
+                                        executor.submit(generate_detection_features_for_frame,
+                                                   det_tracklet, follow_up,
                                                    frame_detections,
 												   distance_per_second_hard_limit))
-                    
+
             last_frame_detections = frame_detections
         
         results = []

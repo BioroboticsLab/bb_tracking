@@ -5,13 +5,14 @@ import hungarian
 
 from . import types
 
-def calculate_detection_pair_features(open_detections,
+def calculate_detection_pair_features(open_tracklets,
                           frame_detections, frame_kdtree,
                           max_distance, detection_feature_fn, detection_cost_fn, n_features):
     tracklet_indices = []
     detection_indices = []
 
-    for i, detection in enumerate(open_detections):
+    for i, tracklet in enumerate(open_tracklets):
+        detection = tracklet.detections[-1]
         x, y = detection.x_hive, detection.y_hive
         neighbors = frame_kdtree.query_ball_point((x, y), max_distance)
 
@@ -21,7 +22,7 @@ def calculate_detection_pair_features(open_detections,
 
     all_features = np.nan * np.zeros(shape=(len(tracklet_indices), n_features), dtype=np.float32)
     for idx, (i, j) in enumerate(zip(tracklet_indices, detection_indices)):
-        pair_features = detection_feature_fn(open_detections[i], frame_detections[j])
+        pair_features = detection_feature_fn(open_tracklets[i], frame_detections[j])
         all_features[idx] = pair_features
 
     return tracklet_indices, detection_indices, all_features
@@ -107,7 +108,7 @@ class TrackletGenerator():
             return
 
         detection0_indices, detection1_indices, all_features = calculate_detection_pair_features(
-                                            [tracklet.detections[-1] for tracklet in self.open_tracklets],
+                                            self.open_tracklets,
                                             frame_detections, frame_kdtree, max_distance=allowed_max_distance,
                                             detection_feature_fn=self.detection_feature_fn, n_features=self.n_features,
                                             detection_cost_fn=self.detection_cost_fn)

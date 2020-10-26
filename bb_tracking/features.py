@@ -3,6 +3,7 @@ import math
 import numpy as np
 import numba
 from . import types
+from .training import detection_data_generation
 import scipy.spatial.distance
 
 def detection_temporal_distance(detection0, detection1):
@@ -104,12 +105,6 @@ def detection_type_to_index(t):
         return 3
     assert False
 
-def detection_type_changes_mask(detection0, detection1):
-    values = [0, 0, 0, 0, 0, 0, 0, 0]
-    values[detection_type_to_index(detection0.detection_type)] = 1
-    values[4 + detection_type_to_index(detection1.detection_type)] = 1
-    return tuple(values)
-
 def get_detection_confidence(detection):
     if detection.bit_probabilities is None:
         return np.nan
@@ -123,19 +118,29 @@ def detection_localizer_saliencies(detection0, detection1):
     return (detection0.localizer_saliency,
             detection1.localizer_saliency)
 
-def detection_localizer_saliencies_difference(detection0, detection1):
-    return 2.0 - abs(detection0.localizer_saliency - detection0.localizer_saliency)
+def detection_track_type_changes_mask(tracklet0, detection1):
+    detections = tracklet0.detections[-5:], [detection1]
+    values = [0, 0, 0, 0, 0, 0, 0, 0]
+    for track_idx in range(2):
+        for det in detections[track_idx]:
+            values[((4 * track_idx) + detection_type_to_index(det.detection_type))] += 1
+        for i in range(4):
+            values[4 * track_idx + i] /= len(detections[track_idx])
+    return tuple(values)
 
-def get_detection_features(detection0, detection1):
-    return (detection_distance(detection0, detection1),
+def get_detection_features(tracklet0, detection1):
+    detection0 = tracklet0.detections[-1]
+    return (
+            detection_distance(detection0, detection1),
             detection_angular_distance(detection0, detection1),
             detection_id_distance(detection0, detection1),
-            detection_localizer_saliencies_difference(detection0, detection1),
             detection_forward_motion(detection0, detection1),
+            track_forward_distance(tracklet0, detection1),
+            float(detection_data_generation.is_valid_detection_pair_combination(detection0, detection1)),
             ) + \
                 detection_confidences(detection0, detection1) + \
                 detection_localizer_saliencies(detection0, detection1) + \
-                detection_type_changes_mask(detection0, detection1)
+                detection_track_type_changes_mask(tracklet0, detection1)
 
 def detection_id_match(detection0, detection1):
     bits0, bits1 = detection0.bit_probabilities, detection1.bit_probabilities
@@ -233,19 +238,10 @@ def extrapolate_detections(seconds, *detections):
             None, detections[1].timestamp_posix + seconds, 0,
             detections[1].detection_type, None, None, None)
 
-def track_forward_distance(tracklet0, tracklet1, seconds_distance=np.nan):
+def track_forward_distance(tracklet0, detection1, seconds_distance=np.nan):
     if np.isnan(seconds_distance):
-        seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
-    return detection_distance(extrapolate_detections(seconds_distance, *tracklet0.detections[-2:]), tracklet1.detections[0], norm=1.0)
-
-def track_backward_distance(tracklet0, tracklet1, seconds_distance=np.nan):
-    if np.isnan(seconds_distance):
-        seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
-    seconds_distance = abs(seconds_distance)
-    return detection_distance(extrapolate_detections(seconds_distance, *tracklet1.detections[1::-1]), tracklet0.detections[-1], norm=1.0)
-
-def track_angular_distance(tracklet0, tracklet1):
-    return detection_angular_distance(tracklet0.detections[-1], tracklet1.detections[0])
+        seconds_distance = detection_temporal_distance(tracklet0.detections[-1], detection1)
+    return detection_distance(extrapolate_detections(seconds_distance, *tracklet0.detections[-2:]), detection1, norm=1.0)
 
 def track_decoder_confidence(tracklet):
     if "track_decoder_confidence" in tracklet.cache_:
@@ -263,19 +259,28 @@ def track_decoder_confidence(tracklet):
 def track_difference_of_confidence(tracklet0, tracklet1):
     return abs(track_decoder_confidence(tracklet0) - track_decoder_confidence(tracklet1))
 
+def track_type_changes_mask(tracklet0, tracklet1):
+    detections = tracklet0.detections[-5:], tracklet1.detections[:5]
+    values = [0, 0, 0, 0, 0, 0, 0, 0]
+    for track_idx in range(2):
+        for det in detections[track_idx]:
+            values[((4 * track_idx) + detection_type_to_index(det.detection_type))] += 1
+        for i in range(4):
+            values[4 * track_idx + i] /= len(detections[track_idx])
+    return tuple(values)
+
 def get_track_features(tracklet0, tracklet1):
     seconds_distance = detection_temporal_distance(tracklet0.detections[-1], tracklet1.detections[0])
     raw_track_distance = track_distance(tracklet0, tracklet1, norm=1.0)
 
-    return (seconds_distance, raw_track_distance,
+    return (
+            float(detection_data_generation.is_valid_detection_pair_combination(tracklet0.detections[-1], tracklet1.detections[0])),
+            raw_track_distance,
             track_median_id_distance(tracklet0, tracklet1),
             track_stable_id_distance(tracklet0, tracklet1),
             detection_id_distance(tracklet0.detections[-1], tracklet1.detections[0]),
-            raw_track_distance / seconds_distance,
-            track_forward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
-            track_backward_distance(tracklet0, tracklet1, seconds_distance=seconds_distance),
-            track_angular_distance(tracklet0, tracklet1),
-            track_difference_of_confidence(tracklet0, tracklet1))
+            track_difference_of_confidence(tracklet0, tracklet1)) + \
+                track_type_changes_mask(tracklet0, tracklet1)
 
 def track_id_match_cost(tracklet0, tracklet1):
     return detection_id_match_cost(tracklet0.detections[-1], tracklet1.detections[0])

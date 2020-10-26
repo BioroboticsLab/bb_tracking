@@ -13,17 +13,20 @@ from .. import features
 from .. import models
 from .. import evaluate_tracks
 from .. import repository_tracker
+from . import detection_data_generation
 
 def get_all_tracklets(ground_truth_repos_path, detection_model_path, homography_fn, cam_ids=(0,)):
     
-    detection_model = models.XGBoostRankingClassifier.load(detection_model_path)
-    detection_classification_threshold = 0.25
+    import joblib
+    with open(detection_model_path, "rb") as f:
+            detection_model = joblib.load(f)
+    detection_classification_threshold = 0.6
 
     detection_kwargs = dict(
-        max_distance_per_second = 20.0,
-        n_features=17,
+        max_distance_per_second = 30.0,
+        n_features=18,
         detection_feature_fn=features.get_detection_features,
-        detection_cost_fn=detection_model.predict_cost,
+        detection_cost_fn=lambda f: 1.0 - detection_model.predict_proba(f)[:, 1],
         max_cost=1.0 - detection_classification_threshold
         )
 
@@ -48,7 +51,7 @@ def get_all_tracklets(ground_truth_repos_path, detection_model_path, homography_
     return list(pipeline_tracker)
 
 def get_tracklet_features(all_tracklets, get_all_gt_tracks_for_track, timestamp_index,
-                         max_gap_size=30, max_speed_per_second=20.0):
+                         max_gap_size=24, max_speed_per_second=20.0):
     import itertools, collections
     all_timestamps = sorted(set(itertools.chain(*[t.timestamps for t in all_tracklets])))
     timestamp_to_index = {t: i for i, t in enumerate(all_timestamps)}
@@ -74,7 +77,8 @@ def get_tracklet_features(all_tracklets, get_all_gt_tracks_for_track, timestamp_
                 
                 left_detection = left_tracklet.detections[-1]
                 right_detection = right_tracklet.detections[0]
-                
+                valid_positive_sample = detection_data_generation.is_valid_detection_pair_combination(left_detection, right_detection)
+
                 gap_length_n_frames = (timestamp_to_index[right_detection.timestamp] - timestamp_to_index[left_detection.timestamp] - 1)
                 assert gap_length_n_frames <= max_gap_size
 
@@ -87,7 +91,8 @@ def get_tracklet_features(all_tracklets, get_all_gt_tracks_for_track, timestamp_
                 tracklet_pair_features = features.get_track_features(left_tracklet, right_tracklet)
                 target = int((left_tracklet_gt_id == right_tracklet_gt_id) \
                              and (left_tracklet_gt_id is not None) \
-                             and (right_tracklet_gt_id is not None))
+                             and (right_tracklet_gt_id is not None)
+                             and valid_positive_sample)
                 
                 meta = [timestamp_to_index[left_detection.timestamp], left_detection.x_pixels, left_detection.y_pixels,
                         timestamp_to_index[right_detection.timestamp], right_detection.x_pixels, right_detection.y_pixels,
