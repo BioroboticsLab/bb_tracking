@@ -1,7 +1,7 @@
 import bisect
 import datetime, pytz
 import numpy as np
-import hungarian
+from scipy.optimize import linear_sum_assignment
 from . import tracklet_generator
 from . import types
 from . import features
@@ -47,7 +47,7 @@ def calculate_tracked_bee_id(track):
         print(bit_confidences)
         print(perc)
         return None, None
-    
+
     bee_id_confidence = np.prod(np.abs(bee_id - 0.5) * 2.0)
     bee_id = bb_utils.ids.BeesbookID.from_bb_binary(bee_id).as_ferwar()
     return bee_id, bee_id_confidence
@@ -158,7 +158,7 @@ class TrackGenerator():
         if self.tracklet_feature_fn is not None:
             tracklet0_indices, tracklet1_indices, all_features = calculate_track_pair_features(
                 self.open_tracks, tracklets, self.tracklet_feature_fn, self.max_distance_per_second, self.max_seconds_gap, self.n_features)
-            
+
             square_dimension = max(n_open_tracks, n_new_tracklets)
             cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
         else:
@@ -170,8 +170,7 @@ class TrackGenerator():
             tracklet1_indices = np.array(tracklet1_indices, dtype=np.int32)
 
             tracklet_generator.fill_distance_matrix(tracklet0_indices, tracklet1_indices, all_distances, cost_matrix)
-            lap_results = hungarian.lap(cost_matrix.copy())
-            track_indices, tracklet_indices = tuple(range(cost_matrix.shape[0])), lap_results[0]
+            track_indices, tracklet_indices = linear_sum_assignment(cost_matrix)
         else:
             track_indices, tracklet_indices = tuple(), tuple()
 
@@ -210,7 +209,7 @@ class TrackGenerator():
             else:
                 yield self.finalize_track(track)
                 closed += 1
-                        
+
         if closed > 0:
             if self.verbose:
                 print("Closed {} tracks. Open tracks: {}.".format(closed, len(self.open_tracks)))
