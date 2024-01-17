@@ -89,7 +89,7 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
 
         # Load the model using XGBoost's native load_model method
         booster = xgb.Booster()
-        booster.load_model(path)
+        booster.load_model(path)        
 
         # Convert the booster to a dictionary (if necessary for your class)
         # Note: This step depends on how your class `cls` is structured and may need adjustment

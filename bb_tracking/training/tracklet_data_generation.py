@@ -22,9 +22,15 @@ def get_all_tracklets(ground_truth_repos_path, detection_model_path, homography_
     #         detection_model = joblib.load(f)
 
     import xgboost as xgb
-    # Load the model using XGBoost's native load_model method
-    detection_model = xgb.Booster()
-    detection_model.load_model(detection_model_path)
+
+    # Load the detection model
+    detection_model_booster = xgb.Booster()
+    detection_model_booster.load_model(detection_model_path)
+    # Wrap the Booster in an XGBClassifier
+    detection_model = XGBClassifier()
+    detection_model._Booster = tracklet_model_booster
+
+
 
 
     detection_classification_threshold = 0.6
