@@ -20,7 +20,7 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
         self.model = model
 
     def fit(self, x, y, update=False):
-        
+
         if not update:
             self.axis_normalizers_min_ = None
             self.axis_normalizers_max_ = None
@@ -34,7 +34,7 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
             kwargs["xgb_model"] = self.model.get_booster()
         self.model.fit(x, y, **kwargs)
         y_ = self.model.predict_proba(x)
-        
+
         self.ylim_observed = (np.minimum(self.ylim_observed[0], y_.min(axis=0)),
                               np.maximum(self.ylim_observed[1], y_.max(axis=0)))
 
@@ -50,7 +50,7 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
         self.diff_normalizer_max_ = self.ydiff_lim_observed[1] - self.diff_normalizer_min_
 
         return self
-    
+
     def fit_batch(self, x, y, xgb_model_path, iteration):
         self.fit(x, y, update=iteration > 0)
         self.model.save_model(xgb_model_path)
@@ -63,11 +63,11 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
         y[:, 1] = (y[:, 1] - self.diff_normalizer_min_) / self.diff_normalizer_max_
         y[y[:, 1] < 0.0, 1] = 0.0
         y[y[:, 1] > 1.0, 1] = 1.0
-        
+
         y[:, 0] = 1.0 - y[:, 1]
-        
+
         return y
-    
+
     def predict_cost(self, x):
         return self.predict_proba(x)[:, 0] # Cost is the inverse probability of the class being 1.
 
@@ -76,30 +76,56 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
                     axis_normalizers=(self.axis_normalizers_min_, self.axis_normalizers_max_),
                     diff_normalizer=(self.diff_normalizer_min_, self.diff_normalizer_max_)
                    )
-    
+
     @classmethod
+    # def load(cls, path):
+    #     import joblib
+    #     with open(path, "rb") as f:
+    #         d = joblib.load(f)
+    #     return cls.from_dict(d)
+
     def load(cls, path):
-        import joblib
-        with open(path, "rb") as f:
-            d = joblib.load(f)
-        return cls.from_dict(d)
-    
+        import xgboost as xgb
+
+        # Load the model using XGBoost's native load_model method
+        booster = xgb.Booster()
+        booster.load_model(path)
+
+        # Convert the booster to a dictionary (if necessary for your class)
+        # Note: This step depends on how your class `cls` is structured and may need adjustment
+        model_dict = booster.__dict__
+
+        # Initialize and return an instance of cls using the model dictionary
+        return cls.from_dict(model_dict)
+
+
     @classmethod
     def from_dict(cls, d):
         classifier = XGBoostRankingClassifier()
         classifier.model = d["model"]
         classifier.axis_normalizers_min_, classifier.axis_normalizers_max_ = d["axis_normalizers"]
         classifier.diff_normalizer_min_, classifier.diff_normalizer_max_ = d["diff_normalizer"]
-        
+
         return classifier
-    
+
+    # def save(self, path):
+    #     import joblib
+    #
+    #     with open(path, "wb") as f:
+    #         joblib.dump(self.to_dict(), f)
+
+
     def save(self, path):
-        import joblib
-        
-        with open(path, "wb") as f:
-            joblib.dump(self.to_dict(), f)
-    
-    
+        # Check if the model is an instance of xgb.Booster or XGBClassifier/XGBRegressor
+        if isinstance(self, xgb.Booster):
+            # Directly save if it's a Booster
+            self.save_model(path)
+        else:
+            # Convert to Booster and save if it's an XGBClassifier/XGBRegressor
+            booster = self.get_booster()
+            booster.save_model(path)
+
+
     @property
     def classes_(self):
         return self.model.classes_
