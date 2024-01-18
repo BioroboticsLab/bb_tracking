@@ -17,9 +17,22 @@ from . import detection_data_generation
 
 def get_all_tracklets(ground_truth_repos_path, detection_model_path, homography_fn, cam_ids=(0,)):
 
-    import joblib
-    with open(detection_model_path, "rb") as f:
-            detection_model = joblib.load(f)
+    # import joblib
+    # with open(detection_model_path, "rb") as f:
+    #         detection_model = joblib.load(f)
+
+    import xgboost as xgb
+
+    # Load the detection model
+    detection_model_booster = xgb.Booster()
+    detection_model_booster.load_model(detection_model_path)
+    # Wrap the Booster in an XGBClassifier
+    detection_model = xgb.XGBClassifier()
+    detection_model._Booster = tracklet_model_booster
+
+
+
+
     detection_classification_threshold = 0.6
 
     detection_kwargs = dict(

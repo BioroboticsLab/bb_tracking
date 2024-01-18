@@ -78,11 +78,26 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
                    )
 
     @classmethod
+    # def load(cls, path):
+    #     import joblib
+    #     with open(path, "rb") as f:
+    #         d = joblib.load(f)
+    #     return cls.from_dict(d)
+
     def load(cls, path):
-        import joblib
-        with open(path, "rb") as f:
-            d = joblib.load(f)
-        return cls.from_dict(d)
+        import xgboost as xgb
+
+        # Load the model using XGBoost's native load_model method
+        booster = xgb.Booster()
+        booster.load_model(path)
+
+        # Convert the booster to a dictionary (if necessary for your class)
+        # Note: This step depends on how your class `cls` is structured and may need adjustment
+        model_dict = booster.__dict__
+
+        # Initialize and return an instance of cls using the model dictionary
+        return cls.from_dict(model_dict)
+
 
     @classmethod
     def from_dict(cls, d):
@@ -93,11 +108,22 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
 
         return classifier
 
-    def save(self, path):
-        import joblib
+    # def save(self, path):
+    #     import joblib
+    #
+    #     with open(path, "wb") as f:
+    #         joblib.dump(self.to_dict(), f)
 
-        with open(path, "wb") as f:
-            joblib.dump(self.to_dict(), f)
+
+    def save(self, path):
+        # Check if the model is an instance of xgb.Booster or XGBClassifier/XGBRegressor
+        if isinstance(self, xgb.Booster):
+            # Directly save if it's a Booster
+            self.save_model(path)
+        else:
+            # Convert to Booster and save if it's an XGBClassifier/XGBRegressor
+            booster = self.get_booster()
+            booster.save_model(path)
 
 
     @property
