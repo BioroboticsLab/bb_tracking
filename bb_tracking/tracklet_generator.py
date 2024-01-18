@@ -115,8 +115,8 @@ class TrackletGenerator():
 
         if len(detection0_indices) > 0:
             distances = self.detection_cost_fn(all_features)
-            detection0_indices = np.array(detection0_indices, dtype=np.int32)
-            detection1_indices = np.array(detection1_indices, dtype=np.int32)
+            detection0_indices = np.array(detection0_indices, dtype=int)
+            detection1_indices = np.array(detection1_indices, dtype=int)
 
 
             square_dimension = max(n_open_tracklets, n_new_detections)
