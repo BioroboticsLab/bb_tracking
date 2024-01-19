@@ -1,7 +1,7 @@
 import bisect
 import datetime, pytz
 import numpy as np
-from scipy.optimize import linear_sum_assignment
+import scipy.optimize
 from . import tracklet_generator
 from . import types
 from . import features
@@ -166,11 +166,11 @@ class TrackGenerator():
 
         if len(tracklet0_indices) > 0:
             all_distances = self.tracklet_cost_fn(all_features[:len(tracklet0_indices), :])
-            tracklet0_indices = np.array(tracklet0_indices, dtype=int)
-            tracklet1_indices = np.array(tracklet1_indices, dtype=int)
+            tracklet0_indices = np.array(tracklet0_indices, dtype=np.int32)
+            tracklet1_indices = np.array(tracklet1_indices, dtype=np.int32)
 
             tracklet_generator.fill_distance_matrix(tracklet0_indices, tracklet1_indices, all_distances, cost_matrix)
-            track_indices, tracklet_indices = linear_sum_assignment(cost_matrix)
+            track_indices, tracklet_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
         else:
             track_indices, tracklet_indices = tuple(), tuple()
 
