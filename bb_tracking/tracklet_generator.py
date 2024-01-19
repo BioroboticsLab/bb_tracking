@@ -1,7 +1,7 @@
 import numba
 import numba.typed
 import numpy as np
-from scipy.optimize import linear_sum_assignment
+import scipy.optimize
 
 from . import types
 
@@ -115,15 +115,15 @@ class TrackletGenerator():
 
         if len(detection0_indices) > 0:
             distances = self.detection_cost_fn(all_features)
-            detection0_indices = np.array(detection0_indices, dtype=int)
-            detection1_indices = np.array(detection1_indices, dtype=int)
+            detection0_indices = np.array(detection0_indices, dtype=np.int32)
+            detection1_indices = np.array(detection1_indices, dtype=np.int32)
 
 
             square_dimension = max(n_open_tracklets, n_new_detections)
             cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
 
             fill_distance_matrix(detection0_indices, detection1_indices, distances, cost_matrix)
-            track_indices, tracklet_indices = linear_sum_assignment(cost_matrix)
+            track_indices, tracklet_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
         else:
             tracklet_indices, detection_indices = tuple(), tuple()
 
