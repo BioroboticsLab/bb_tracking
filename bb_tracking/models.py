@@ -78,11 +78,6 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
                    )
 
     @classmethod
-    # def load(cls, path):
-    #     import joblib
-    #     with open(path, "rb") as f:
-    #         d = joblib.load(f)
-    #     return cls.from_dict(d)
 
     def load(cls, path):
         import xgboost as xgb
@@ -107,12 +102,6 @@ class XGBoostRankingClassifier(sklearn.base.BaseEstimator):
         classifier.diff_normalizer_min_, classifier.diff_normalizer_max_ = d["diff_normalizer"]
 
         return classifier
-
-    # def save(self, path):
-    #     import joblib
-    #
-    #     with open(path, "wb") as f:
-    #         joblib.dump(self.to_dict(), f)
 
 
     def save(self, path):
