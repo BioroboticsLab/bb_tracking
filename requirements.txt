@@ -7,7 +7,5 @@ scikit-learn
 torch
 torchvision
 matplotlib
-# The hungarian packages probably has to be manually installed by following the instructions:
-# https://github.com/hrldcpr/hungarian.git
-hungarian
+scipy
 xgboost

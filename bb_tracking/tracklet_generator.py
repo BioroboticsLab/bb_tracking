@@ -1,7 +1,7 @@
 import numba
 import numba.typed
 import numpy as np
-import hungarian
+import scipy.optimize
 
 from . import types
 
@@ -64,7 +64,7 @@ class TrackletGenerator():
         self.max_distance_per_second = max_distance_per_second
         self.max_seconds_gap = max_seconds_gap
         self.close_tracklets_longer_than = close_tracklets_longer_than
-    
+
     def get_first_open_begin_datetime(self):
         return self.open_tracklets_first_begin
 
@@ -84,7 +84,7 @@ class TrackletGenerator():
                                              [detection], [frame_datetime], [frame_id], None, None, dict()))
 
     def push_frame(self, frame_id, frame_datetime, frame_detections, frame_kdtree):
-        
+
         allowed_max_distance = self.max_distance_per_second
         seconds_since_last_frame = 0.0
 
@@ -92,7 +92,7 @@ class TrackletGenerator():
         if self.last_frame_datetime is not None:
             seconds_since_last_frame = (frame_datetime - self.last_frame_datetime).total_seconds()
             assert seconds_since_last_frame > 0
-            
+
             if seconds_since_last_frame > self.max_seconds_gap:
                 yield from self.finalize_all()
             else:
@@ -118,13 +118,12 @@ class TrackletGenerator():
             detection0_indices = np.array(detection0_indices, dtype=np.int32)
             detection1_indices = np.array(detection1_indices, dtype=np.int32)
 
-            
+
             square_dimension = max(n_open_tracklets, n_new_detections)
             cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
 
             fill_distance_matrix(detection0_indices, detection1_indices, distances, cost_matrix)
-            lap_results = hungarian.lap(cost_matrix.copy())
-            tracklet_indices, detection_indices = tuple(range(cost_matrix.shape[0])), lap_results[0]
+            track_indices, tracklet_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
         else:
             tracklet_indices, detection_indices = tuple(), tuple()
 
@@ -143,7 +142,7 @@ class TrackletGenerator():
 
             assert tracklet_idx not in linked_tracklet_indices
             assert detection_idx not in linked_detection_indices
-            
+
             linked_tracklet_indices.add(tracklet_idx)
             linked_detection_indices.add(detection_idx)
 
