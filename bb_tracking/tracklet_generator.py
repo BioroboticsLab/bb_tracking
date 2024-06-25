@@ -123,7 +123,7 @@ class TrackletGenerator():
             cost_matrix = np.zeros(shape=(square_dimension, square_dimension), dtype=np.float32) + 100000.0
 
             fill_distance_matrix(detection0_indices, detection1_indices, distances, cost_matrix)
-            track_indices, tracklet_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
+            tracklet_indices, detection_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
         else:
             tracklet_indices, detection_indices = tuple(), tuple()
 
