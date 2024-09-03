@@ -53,7 +53,7 @@ class CamDataGeneratorTracker():
 
 class RepositoryTracker(CamDataGeneratorTracker):
     def __init__(self, repo_path,
-                 dt_begin, dt_end, homography_fn, repo_kwargs=dict(),
+                 dt_begin, dt_end, homography_fn=None, repo_kwargs=dict(),
                  **kwargs):
 
         def yield_from_repository():
