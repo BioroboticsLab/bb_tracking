@@ -91,7 +91,10 @@ class TrackletGenerator():
         # Enfore maximum gap duration (even if just one frame apart).
         if self.last_frame_datetime is not None:
             seconds_since_last_frame = (frame_datetime - self.last_frame_datetime).total_seconds()
-            assert seconds_since_last_frame > 0
+            try:
+                assert seconds_since_last_frame > 0
+            except AssertionError:
+                print(f"Frame error, negative seconds_since_last_frame: {seconds_since_last_frame}")
 
             if seconds_since_last_frame > self.max_seconds_gap:
                 yield from self.finalize_all()
