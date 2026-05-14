@@ -137,7 +137,13 @@ def iterate_bb_binary_repository(repository_path, dt_begin, dt_end, homography_f
                         no_datetime_timestamps=no_datetime_timestamps))
             
             xy = [(detection.x_hive, detection.y_hive) for detection in frame_detections]
-            frame_kdtree = scipy.spatial.cKDTree(xy)
+            # Frames with zero detections (briefly obscured hive, lid event, etc.)
+            # are legal upstream — fall back to an empty kd-tree so iteration
+            # continues and downstream query_ball_point calls return [].
+            if xy:
+                frame_kdtree = scipy.spatial.cKDTree(xy)
+            else:
+                frame_kdtree = scipy.spatial.cKDTree(np.empty((0, 2)))
 
             yield (cam_id, frame_id, frame_datetime,
                     frame_detections, frame_kdtree)
